@@ -1,9 +1,8 @@
 //! Alternative implementations of SDK functions under the debugger.
 
-use gdbstub::conn::{Connection, ConnectionExt};
 use vex_sdk::*;
 
-use crate::{debugger::DebugSession, transport::TransportError};
+use crate::{debugger::DebugSession, transport::{Transport}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InternalBreakpoint {
@@ -12,7 +11,7 @@ pub enum InternalBreakpoint {
 
 impl<S> DebugSession<'_, S>
 where
-    S: Connection<Error = TransportError> + ConnectionExt,
+    S: Transport,
 {
     pub(crate) fn register_internal_breakpoints(&mut self) {
         assert!(self.internal_breaks.is_none());

@@ -26,6 +26,10 @@ impl From<&'static str> for TransportError {
     }
 }
 
+/// Method of communication between debugger and host.
+pub trait Transport: ConnectionExt + Connection<Error = TransportError> + Send + 'static {}
+impl<T: ConnectionExt + Connection<Error = TransportError> + Send + 'static> Transport for T {}
+
 /// Debug logging via stdio.
 #[derive(Debug)]
 pub struct StdioTransport;

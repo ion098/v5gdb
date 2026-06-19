@@ -4,7 +4,7 @@ use core::{convert::Infallible, mem};
 
 use derive_more::From;
 use gdbstub::{
-    conn::{Connection, ConnectionExt},
+    conn::Connection,
     stub::{
         GdbStub, GdbStubBuilder, GdbStubError, MultiThreadStopReason, SingleThreadStopReason,
         state_machine::GdbStubStateMachine,
@@ -22,7 +22,7 @@ use crate::{
     exceptions::DebugEventContext,
     gdb_target::{V5Target, breakpoint::hardware::Specificity},
     sys::{DebuggerSystem, System},
-    transport::TransportError,
+    transport::{Transport, TransportError},
 };
 
 pub mod sdk;
@@ -43,17 +43,11 @@ impl From<GdbStubError<Infallible, TransportError>> for DebuggerError {
 }
 
 /// Debugger manager.
-pub struct V5Debugger<S>
-where
-    S: Connection<Error = TransportError> + ConnectionExt,
-{
-    state: Mutex<DebugSession<'static, S>>,
+pub struct V5Debugger<S: Transport> {
+    session: Mutex<DebugSession<'static, S>>,
 }
 
-impl<S> V5Debugger<S>
-where
-    S: Connection<Error = TransportError> + ConnectionExt,
-{
+impl<S: Transport> V5Debugger<S> {
     /// Creates a new debugger.
     ///
     /// This function can only be called once per program run because the debugger will attempt to
@@ -71,7 +65,7 @@ where
         let target = V5Target::new(&mut unsafe { devcfg::Registers::new_mmio_fixed() });
 
         Self {
-            state: Mutex::new(DebugSession {
+            session: Mutex::new(DebugSession {
                 stage: SessionStage::Uninitialized(
                     GdbStubBuilder::new(stream)
                         .with_packet_buffer(pkt_buffer)
@@ -86,34 +80,31 @@ where
 
     /// Returns the debugger's internal state.
     #[must_use]
-    pub fn state<'a>(&'a self) -> MutexGuard<'a, DebugSession<'static, S>> {
-        self.state.lock()
+    pub fn session<'a>(&'a self) -> MutexGuard<'a, DebugSession<'static, S>> {
+        self.session.lock()
     }
 }
 
-unsafe impl<S> Debugger for V5Debugger<S>
-where
-    S: Connection<Error = TransportError> + ConnectionExt + Send + 'static,
-{
+unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
     fn initialize(&self) {
-        let mut state = self.state();
-        state.register_internal_breakpoints();
-        System::initialize(&mut state.target);
+        let mut session = self.session();
+        session.register_internal_breakpoints();
+        System::initialize(&mut session.target);
         crate::sdk::competition::install_override();
         log::debug!("Debugger initialized");
     }
 
     unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> bool {
-        let mut state = self.state();
+        let mut session = self.session();
         // Pause software breakpoints before allowing unpredictable control flow (by interrupts).
-        state.target.set_breakpoints_ignored(true);
+        session.target.set_breakpoints_ignored(true);
 
         // We re-enable interrupts after the abort (so that UART works) but prevent the RTOS from
         // preempting us. When the debugger is active, the system should appear paused.
 
         // If we're handling a single-step completion, the scheduler is already disabled from when
         // the step was initiated (previous debug session), so there's no need to do that again.
-        if state.target.single_step_request.is_none() {
+        if session.target.single_step_request.is_none() {
             System::suspend_preemption();
         }
         unsafe {
@@ -127,30 +118,30 @@ where
             log::error!("Your program has been paused. Please connect a debugger.")
         });
 
-        let was_locked = state.target.hw_manager.locked();
-        state.target.hw_manager.set_locked(false);
-        state.target.exception_ctx = ctx.clone();
+        let was_locked = session.target.hw_manager.locked();
+        session.target.hw_manager.set_locked(false);
+        session.target.exception_ctx = ctx.clone();
 
-        let reason = state.target.hw_manager.last_break_reason();
+        let reason = session.target.hw_manager.last_break_reason();
 
-        let bkpt_address = state.target.exception_ctx.program_counter;
-        let tracked_bkpt_id = state.target.query_sw_breakpoint(bkpt_address);
+        let bkpt_address = session.target.exception_ctx.program_counter;
+        let tracked_bkpt_id = session.target.query_sw_breakpoint(bkpt_address);
 
-        state.target.last_stop_was_hardcoded =
+        session.target.last_stop_was_hardcoded =
             tracked_bkpt_id.is_none() && reason == Some(DebugEventReason::BkptInstr);
 
         // If we previously wanted to single step, we can permanently remove the breakpoint that
         // supported that now. The single step request is then cleared since we've finished all
         // required cleanup.
-        if let Some(single_step) = state.target.single_step_request.take() {
-            state.target.hw_manager.remove_breakpoint_at(
+        if let Some(single_step) = session.target.single_step_request.take() {
+            session.target.hw_manager.remove_breakpoint_at(
                 single_step.target_addr,
                 Specificity::Mismatch,
                 single_step.kind,
             );
         }
 
-        if state.target.last_stop_was_hardcoded {
+        if session.target.last_stop_was_hardcoded {
             // Normally we try to avoid an infinite loop of breakpoints by replacing tracked
             // software breakpoints with their real instructions and re-running them. But if the
             // `bkpt` *is* the real instruction then we don't need to do the normal
@@ -159,14 +150,14 @@ where
 
             // SAFETY: Since the address was able to be properly fetched, it implies it is valid for
             // reads.
-            let instr = unsafe { state.target.exception_ctx.read_instr() };
-            state.target.exception_ctx.program_counter += instr.size() as u32;
+            let instr = unsafe { session.target.exception_ctx.read_instr() };
+            session.target.exception_ctx.program_counter += instr.size() as u32;
         }
 
         let mut show_debug_console = true;
 
         if let Some(id) = tracked_bkpt_id
-            && let Some(bkpt) = state.target.breaks[id]
+            && let Some(bkpt) = session.target.breaks[id]
         {
             // Some tracked breakpoints weren't requested by the user and are just used internally.
             // These should be transparent to the user by default. Note: It's possible
@@ -175,18 +166,18 @@ where
 
             // If this breakpoint is used internally, run any necessary callbacks.
             if bkpt.reason.internal {
-                show_debug_console |= state.handle_internal_breakpoint();
+                show_debug_console |= session.handle_internal_breakpoint();
             }
         }
 
         if show_debug_console {
             log::debug!("Starting debug console");
-            state.run_debug_console();
+            session.run_debug_console();
             log::debug!("Debug console has exited");
         }
 
         // Write any modifications back to the stack so the assembly code restores the updated state
-        *ctx = state.target.exception_ctx.clone();
+        *ctx = session.target.exception_ctx.clone();
 
         log::debug!("Exiting debug event handler");
 
@@ -194,10 +185,10 @@ where
         // task, not a different one. - Side note: If PROS implemented ARM's context id register, we
         // could just filter the single step breakpoint by task id and there would be no need for
         // this.
-        let should_unpause_scheduler = state.target.single_step_request.is_none();
+        let should_unpause_scheduler = session.target.single_step_request.is_none();
 
-        state.target.hw_manager.set_locked(was_locked);
-        state.target.set_breakpoints_ignored(false);
+        session.target.hw_manager.set_locked(was_locked);
+        session.target.set_breakpoints_ignored(false);
 
         should_unpause_scheduler
     }
@@ -206,7 +197,7 @@ where
 /// Handles the GDB protocol lifecycle.
 pub struct DebugSession<'a, S>
 where
-    S: Connection<Error = TransportError> + ConnectionExt,
+    S: Transport,
 {
     pub target: V5Target,
     internal_breaks: Option<[(InternalBreakpoint, u32); 1]>,
@@ -225,7 +216,7 @@ enum SessionStage<'a, C: Connection> {
 
 impl<S> DebugSession<'_, S>
 where
-    S: Connection<Error = TransportError> + ConnectionExt,
+    S: Transport,
 {
     fn has_client(&self) -> bool {
         match &self.stage {
