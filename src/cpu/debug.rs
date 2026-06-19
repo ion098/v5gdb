@@ -287,8 +287,6 @@ pub struct DebugLogic {
     lock_access: u32,
     /// Indicates whether the debug software lock is active, which prevents accidental damage to
     /// the debug registers by disabling writes. It is on by default.
-    ///
-    /// This field is read-only. The software lock can be disabl
     #[mmio(PureRead)]
     lock_status: SoftwareLock,
     #[mmio(PureRead)]
