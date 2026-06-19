@@ -3,14 +3,14 @@
 use gdbstub::conn::{Connection, ConnectionExt};
 use vex_sdk::*;
 
-use crate::{debugger::DebuggerState, transport::TransportError};
+use crate::{debugger::DebugSession, transport::TransportError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InternalBreakpoint {
     SystemExitRequest,
 }
 
-impl<S> DebuggerState<'_, S>
+impl<S> DebugSession<'_, S>
 where
     S: Connection<Error = TransportError> + ConnectionExt,
 {

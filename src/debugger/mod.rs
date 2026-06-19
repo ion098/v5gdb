@@ -1,10 +1,8 @@
 //! Main debugger loop and event handling logic.
 
-use core::{
-    convert::Infallible,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::{convert::Infallible, mem};
 
+use derive_more::From;
 use gdbstub::{
     conn::{Connection, ConnectionExt},
     stub::{
@@ -14,6 +12,7 @@ use gdbstub::{
 };
 use snafu::Snafu;
 use spin::{Mutex, MutexGuard, Once};
+use static_cell::StaticCell;
 use zynq7000::devcfg;
 
 use crate::{
@@ -48,7 +47,7 @@ pub struct V5Debugger<S>
 where
     S: Connection<Error = TransportError> + ConnectionExt,
 {
-    state: Mutex<DebuggerState<'static, S>>,
+    state: Mutex<DebugSession<'static, S>>,
 }
 
 impl<S> V5Debugger<S>
@@ -56,34 +55,29 @@ where
     S: Connection<Error = TransportError> + ConnectionExt,
 {
     /// Creates a new debugger.
+    ///
+    /// This function can only be called once per program run because the debugger will attempt to
+    /// claim a global packet buffer.
     #[must_use]
     pub fn new(stream: S) -> Self {
-        const GDB_PACKET_BUFFER_SIZE: usize = 4096;
-        static mut GDB_PACKET_BUFFER: [u8; GDB_PACKET_BUFFER_SIZE] = [0; _];
-        static GDB_PACKET_BUFFER_CLAIMED: AtomicBool = AtomicBool::new(false);
+        const PACKET_BUFFER_SIZE: usize = 4096;
+        // Stored as a global to help limit stack usage.
+        static PACKET_BUFFER: StaticCell<[u8; PACKET_BUFFER_SIZE]> = StaticCell::new();
 
-        if GDB_PACKET_BUFFER_CLAIMED.swap(true, Ordering::Acquire) {
-            panic!("Cannot create multiple debuggers");
-        }
-
-        // SAFETY: The mutable ownership over the buffer can only be taken once.
-        let gdb_buffer = unsafe {
-            core::slice::from_raw_parts_mut(&raw mut GDB_PACKET_BUFFER[0], GDB_PACKET_BUFFER_SIZE)
-        };
+        let pkt_buffer = PACKET_BUFFER
+            .try_init_with(|| [0; _])
+            .expect("Tried to claim packet buffer twice");
 
         let target = V5Target::new(&mut unsafe { devcfg::Registers::new_mmio_fixed() });
 
         Self {
-            state: Mutex::new(DebuggerState {
-                gdb: {
-                    Some(
-                        GdbStubBuilder::new(stream)
-                            .with_packet_buffer(gdb_buffer)
-                            .build()
-                            .unwrap(),
-                    )
-                },
-                stub: None,
+            state: Mutex::new(DebugSession {
+                stage: SessionStage::Uninitialized(
+                    GdbStubBuilder::new(stream)
+                        .with_packet_buffer(pkt_buffer)
+                        .build()
+                        .unwrap(),
+                ),
                 target,
                 internal_breaks: None,
             }),
@@ -92,7 +86,7 @@ where
 
     /// Returns the debugger's internal state.
     #[must_use]
-    pub fn state<'a>(&'a self) -> MutexGuard<'a, DebuggerState<'static, S>> {
+    pub fn state<'a>(&'a self) -> MutexGuard<'a, DebugSession<'static, S>> {
         self.state.lock()
     }
 }
@@ -209,51 +203,62 @@ where
     }
 }
 
-/// Internal mutable state of debugger.
-pub struct DebuggerState<'a, S>
+/// Handles the GDB protocol lifecycle.
+pub struct DebugSession<'a, S>
 where
     S: Connection<Error = TransportError> + ConnectionExt,
 {
     pub target: V5Target,
     internal_breaks: Option<[(InternalBreakpoint, u32); 1]>,
-    gdb: Option<GdbStub<'a, V5Target, S>>,
-    stub: Option<GdbStubStateMachine<'a, V5Target, S>>,
+    stage: SessionStage<'a, S>,
 }
 
-impl<S> DebuggerState<'_, S>
+#[derive(From)]
+enum SessionStage<'a, C: Connection> {
+    /// Remote has not yet connected / been configured.
+    Uninitialized(GdbStub<'a, V5Target, C>),
+    /// Session is running.
+    Active(GdbStubStateMachine<'a, V5Target, C>),
+    /// Placeholder while transitioning between states.
+    Transitioning,
+}
+
+impl<S> DebugSession<'_, S>
 where
     S: Connection<Error = TransportError> + ConnectionExt,
 {
     fn has_client(&self) -> bool {
-        let disconnected = matches!(
-            &self.stub,
-            None | Some(GdbStubStateMachine::Disconnected(_))
-        );
-        !disconnected
+        match &self.stage {
+            SessionStage::Active(GdbStubStateMachine::Disconnected(_)) => false,
+            SessionStage::Active(_) => true,
+            _ => false,
+        }
     }
 
     /// Runs the debug console until the user indicates they want to continue program execution.
     fn run_debug_console(&mut self) {
-        if let Some(gdb) = self.gdb.take() {
-            // Initial GDB setup - calls connection setup callback.
-            self.stub = Some(gdb.run_state_machine(&mut self.target).unwrap());
-        }
-        let mut gdb = self.stub.take().unwrap();
-
-        // Enter debugging loop until it's time to resume.
-
-        self.target.reset_resume();
-        while !self.target.resume {
-            unsafe {
-                vex_sdk::vexTasksRun();
+        let stage = mem::replace(&mut self.stage, SessionStage::Transitioning);
+        match stage {
+            SessionStage::Uninitialized(gdb) => {
+                self.stage = gdb.run_state_machine(&mut self.target).unwrap().into();
+                self.run_debug_console();
             }
+            SessionStage::Active(mut state) => {
+                self.target.reset_resume();
+                while !self.target.resume {
+                    unsafe {
+                        vex_sdk::vexTasksRun();
+                    }
 
-            gdb = Self::tick_state_machine(gdb, &mut self.target)
-                .expect("debugger encountered an error");
+                    state = Self::tick_state_machine(state, &mut self.target)
+                        .expect("debugger encountered an error");
+                }
+
+                self.target.resume = false;
+                self.stage = state.into();
+            }
+            SessionStage::Transitioning => panic!("Cannot resume from transitioning state"),
         }
-
-        self.target.resume = false;
-        self.stub = Some(gdb);
     }
 
     fn tick_state_machine<'a>(

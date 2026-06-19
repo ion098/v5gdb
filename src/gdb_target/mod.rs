@@ -45,7 +45,7 @@ pub mod resume;
 pub mod single_register_access;
 pub mod thread;
 
-/// Debugger state storage.
+/// Receives callbacks from `gdbstub` and keeps track of state required to drive the debugger.
 pub struct V5Target {
     pub exception_ctx: DebugEventContext,
     /// Indicates whether the debugger monitor loop should stop, allowing the program to continue
