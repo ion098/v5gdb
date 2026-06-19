@@ -8,6 +8,9 @@ publish = false
 name = "v5gdb"
 crate-type = ["staticlib"]
 
+[build-dependencies]
+cbindgen = "0.29.4"
+
 [dependencies]
 v5gdb = { path = "../", default-features = false }
 gdbstub.workspace = true

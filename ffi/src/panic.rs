@@ -13,8 +13,8 @@ fn panic_handler(panic: &PanicInfo) -> ! {
     }
 }
 
-pub struct ErrorReport {
-    pub y_offset: i32,
+struct ErrorReport {
+    y_offset: i32,
 
     // One extra leading byte for a null terminator when word-breaking.
     buf: [u8; Self::LINE_MAX_WIDTH + 1],
@@ -22,17 +22,17 @@ pub struct ErrorReport {
 }
 
 impl ErrorReport {
-    pub const DISPLAY_WIDTH: i32 = 480;
-    pub const DISPLAY_HEIGHT: i32 = 240;
-    pub const BOX_MARGIN: i32 = 16;
-    pub const BOX_PADDING: i32 = 16;
-    pub const LINE_HEIGHT: i32 = 20;
-    pub const LINE_MAX_WIDTH: usize = 52;
+    const DISPLAY_WIDTH: i32 = 480;
+    const DISPLAY_HEIGHT: i32 = 240;
+    const BOX_MARGIN: i32 = 16;
+    const BOX_PADDING: i32 = 16;
+    const LINE_HEIGHT: i32 = 20;
+    const LINE_MAX_WIDTH: usize = 52;
 
-    pub const COLOR_RED: u32 = 0x8b0_000;
-    pub const COLOR_WHITE: u32 = 0xFFF_FFF;
+    const COLOR_RED: u32 = 0x8b0_000;
+    const COLOR_WHITE: u32 = 0xFFF_FFF;
 
-    pub fn begin() -> Self {
+    fn begin() -> Self {
         unsafe {
             vex_sdk::vexDisplayDoubleBufferDisable();
             vex_sdk::vexDisplayForegroundColor(Self::COLOR_RED);

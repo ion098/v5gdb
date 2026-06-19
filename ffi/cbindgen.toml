@@ -2,7 +2,7 @@
 
 pragma_once = true
 include_version = true
-namespace = "v5gdb"
+namespaces = ["v5gdb", "impl"]
 
 [fn]
 no_return = "[[noreturn]]"
