@@ -220,9 +220,11 @@ where
     fn register_internal_breakpoints(&mut self) {
         assert!(self.internal_breaks.is_none());
 
+        let exit_func = vexSystemExitRequest as *const () as u32;
+
         let internal_breaks = [(
             InternalBreakpoint::SystemExitRequest,
-            vexSystemExitRequest as *const () as u32,
+            exit_func & !1, // Clear thumb bit, if any
         )];
 
         for (_id, addr) in internal_breaks {
