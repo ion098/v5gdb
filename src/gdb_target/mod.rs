@@ -21,6 +21,7 @@ use gdbstub::{
         },
     },
 };
+use spin::Once;
 use zynq7000::devcfg;
 
 use crate::{
@@ -45,29 +46,22 @@ pub mod resume;
 pub mod single_register_access;
 pub mod thread;
 
-/// Receives callbacks from `gdbstub` and keeps track of state required to drive the debugger.
-pub struct V5Target {
-    pub exception_ctx: DebugEventContext,
-    /// Indicates whether the debugger monitor loop should stop, allowing the program to continue
-    /// execution.
-    pub resume: bool,
-    /// Indicates whether the program is exiting.
+/// Why execution stopped at the current PC.
+///
+/// Helps determine what stop reason to send to GDB and how to set up the debug console.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StopReason {
+    /// A hardware breakpoint was triggered, or a single-step was completed.
+    HardwareBreak,
+    /// A `bkpt` instruction managed by v5gdb was triggered.
+    TrackedSoftwareBreak { id: usize },
+    /// A `bkpt` instruction hard-coded in the program source code was triggered.
+    UntrackedSoftwareBreak,
+    /// The program stopped for some other reason.
     ///
-    /// If this goes back to `false`, an exit has been acknowledged by GDB.
-    pub exiting: bool,
-
-    /// Indicates whether the most recent program stop occurred due to a hardcoded breakpoint
-    /// (`bkpt` instruction).
-    pub last_stop_was_hardcoded: bool,
-
-    /// Indicates whether new software breakpoints should be enabled.
-    pub breaks_paused: bool,
-    /// The list of breakpoints.
-    pub breaks: [Option<SwBreakpoint>; 16],
-    pub hw_manager: HwBreakpointManager,
-    /// If set, breakpoints are being used to single step. Report any hardware breaks as single
-    /// steps instead of normal breakpoints.
-    pub single_step_request: Option<SingleStepRequest>,
+    /// It's probably only possible for this to be a watchpoint since most other debug events (like
+    /// halt request and OS Unlock) are only ever halting.
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,43 +78,114 @@ pub struct Breakpoint {
     pub is_hardware: bool,
 }
 
+/// Tracks the lifecycle of the debug monitor.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum MonitorStatus {
+    /// The program is paused and the monitor is running.
+    Active,
+    /// The program is paused immediately prior to exiting and the monitor intends to disconnect
+    /// the GDB client.
+    Exiting,
+    /// The program will be resumed shortly.
+    ResumingProgram,
+}
+
+/// Receives callbacks from `gdbstub` and keeps track of state required to drive the debugger.
+pub struct V5Target {
+    exception_ctx: DebugEventContext,
+    pub monitor_status: MonitorStatus,
+
+    /// Why the most recent debugger entry occurred.
+    stop_reason: StopReason,
+
+    /// Indicates whether new software breakpoints should be enabled.
+    breaks_paused: bool,
+    /// The list of breakpoints.
+    breaks: [Option<SwBreakpoint>; 16],
+
+    hw_manager: HwBreakpointManager,
+    /// Tracks whether the hardware breakpoint manager should be re-locked when exiting a
+    /// breakpoint.
+    original_hw_lock_state: bool,
+
+    /// If set, breakpoints are being used to single step. Report any hardware breaks as single
+    /// steps instead of normal breakpoints.
+    single_step_request: Option<SingleStepRequest>,
+}
+
 impl V5Target {
     #[must_use]
     pub fn new(devcfg: &mut devcfg::MmioRegisters<'_>) -> Self {
         Self {
             exception_ctx: DebugEventContext::default(),
-            resume: false,
-            exiting: false,
-            last_stop_was_hardcoded: false,
+            monitor_status: MonitorStatus::ResumingProgram,
+            stop_reason: StopReason::Other,
             breaks_paused: false,
             breaks: [None; _],
             single_step_request: None,
+            original_hw_lock_state: false,
             hw_manager: HwBreakpointManager::setup(devcfg),
         }
     }
 
-    /// Clears the resume flag.
-    pub const fn reset_resume(&mut self) {
-        self.resume = false;
+    /// Activate the debugger after a breakpoint is triggered.
+    pub fn enter_breakpoint(&mut self, ctx: &mut DebugEventContext) -> StopReason {
+        // Pause software breakpoints before allowing unpredictable control flow (by interrupts).
+        self.set_breakpoints_ignored(true);
+
+        // We re-enable interrupts after the abort (so that UART works) but prevent the RTOS from
+        // preempting us. When the debugger is active, the system should appear paused.
+
+        // If we're handling a single-step completion, the scheduler is already disabled from when
+        // the step was initiated (previous debug session), so there's no need to do that again.
+        if self.single_step_request.is_none() {
+            System::suspend_preemption();
+        }
+        unsafe {
+            aarch32_cpu::interrupt::enable();
+        }
+
+        log::debug!("Entered debug event handler");
+        static BKPT_LOG: Once = Once::new();
+        BKPT_LOG.call_once(|| {
+            log::error!("**** v5gdb: BREAKPOINT TRIGGERED ****");
+            log::error!("Your program has been paused. Please connect a debugger.")
+        });
+
+        self.original_hw_lock_state = self.hw_manager.locked();
+        self.hw_manager.set_locked(false);
+
+        self.exception_ctx = ctx.clone();
+        self.monitor_status = MonitorStatus::Active;
+        self.classify_stop();
+        self.finalize_single_step();
+        self.fixup_manual_bkpt();
+
+        self.stop_reason
     }
 
-    /// Marks the debugger as ready to resume.
-    pub const fn resume(&mut self) {
-        self.resume = true;
-    }
+    /// Deactivate the debugger and apply pending changes.
+    pub fn leave_breakpoint(&mut self, ctx: &mut DebugEventContext) -> bool {
+        // Write back any modifications back so the debug event handler can apply them.
+        *ctx = self.exception_ctx.clone();
 
-    /// Marks the program as pending exit.
-    ///
-    /// If this is called before entering a debug monitor loop, the debugger will tell GDB that the
-    /// program has exited. This will cause the debug monitor to immediately stop, and control will
-    /// return to the program to do any final clean-up.
-    pub const fn exit_request(&mut self) {
-        self.exiting = true;
+        log::debug!("Exiting debug event handler");
+
+        // Single steps run with the scheduler off so that we are guaranteed to step the current
+        // task, not a different one. - Side note: If PROS implemented ARM's context id register, we
+        // could just filter the single step breakpoint by task id and there would be no need for
+        // this.
+        let should_unpause_scheduler = self.single_step_request.is_none();
+
+        self.hw_manager.set_locked(self.original_hw_lock_state);
+        self.set_breakpoints_ignored(false);
+
+        should_unpause_scheduler
     }
 
     /// Create a breakpoint that will stop the debugger after a single instruction has been
     /// executed.
-    pub fn setup_step(&mut self) -> Result<(), BreakpointError> {
+    pub fn setup_single_step(&mut self) -> Result<(), BreakpointError> {
         if self.single_step_request.is_some() {
             return Ok(());
         }
@@ -147,13 +212,71 @@ impl V5Target {
         Ok(())
     }
 
-    pub fn get_stop_reason(&self) -> MultiThreadStopReason<u32> {
-        if self.exiting {
+    /// Mark the pending single step request (if any) as completed and clean up its state.
+    fn finalize_single_step(&mut self) {
+        // If we previously wanted to single step, we can permanently remove the breakpoint that
+        // supported that now. The single step request is then cleared since we've finished all
+        // required cleanup.
+        if let Some(single_step) = self.single_step_request.take() {
+            self.hw_manager.remove_breakpoint_at(
+                single_step.target_addr,
+                Specificity::Mismatch,
+                single_step.kind,
+            );
+        }
+    }
+
+    /// Fetch the reason the last debugger entry occurred.
+    fn classify_stop(&mut self) {
+        let pc = self.exception_ctx.program_counter;
+        self.stop_reason = match self.hw_manager.last_break_reason() {
+            Some(DebugEventReason::Breakpoint) => StopReason::HardwareBreak,
+            Some(DebugEventReason::BkptInstr) => match self.query_sw_breakpoint(pc) {
+                Some(id) => StopReason::TrackedSoftwareBreak { id },
+                None => StopReason::UntrackedSoftwareBreak,
+            },
+            _ => StopReason::Other,
+        }
+    }
+
+    /// Acknowledge a manual call to `bkpt` by proceeding to the next instruction.
+    fn fixup_manual_bkpt(&mut self) {
+        if self.stop_reason == StopReason::UntrackedSoftwareBreak {
+            // Normally we try to avoid an infinite loop of breakpoints by replacing tracked
+            // software breakpoints with their real instructions and re-running them. But if the
+            // `bkpt` *is* the real instruction then we don't need to do the normal
+            // replace-and-rerun thing. Instead, we just skip over it because its side-effect has
+            // been completed.
+
+            // SAFETY: Since the address was able to be properly fetched, it implies it is valid for
+            // reads.
+            let instr = unsafe { self.exception_ctx.read_instr() };
+            self.exception_ctx.program_counter += instr.size() as u32;
+        }
+    }
+
+    /// Returns the tracked software breakpoint occupying the given slot, if any.
+    pub(crate) fn breakpoint(&self, id: usize) -> Option<SwBreakpoint> {
+        self.breaks[id]
+    }
+
+    /// Returns whether breakpoints are currently prevented from triggering.
+    pub(crate) fn breakpoints_ignored(&self) -> bool {
+        self.breaks_paused
+    }
+
+    /// Get the working copy of the saved program context.
+    pub(crate) fn saved_ctx(&self) -> &DebugEventContext {
+        &self.exception_ctx
+    }
+
+    pub fn gdb_stop_reason(&self) -> MultiThreadStopReason<u32> {
+        if self.monitor_status == MonitorStatus::Exiting {
             return MultiThreadStopReason::Exited(0);
         }
 
-        match self.hw_manager.last_break_reason() {
-            Some(DebugEventReason::Breakpoint) => {
+        match self.stop_reason {
+            StopReason::HardwareBreak => {
                 // We don't use MultiThreadStopReason::DoneStep because it doesn't send thread info
                 // to GDB (DoneStep is just an alias for SIGTRAP without thread info). HwBreak is
                 // essentially the same message but with thread info set.
@@ -161,13 +284,15 @@ impl V5Target {
             }
             // Sometimes GDB will try to skip hardcoded breakpoints it's already seen
             // recently, so we report those as traps instead.
-            Some(DebugEventReason::BkptInstr) if !self.last_stop_was_hardcoded => {
+            StopReason::TrackedSoftwareBreak { .. } => {
                 MultiThreadStopReason::SwBreak(System::current_thread())
             }
-            _ => MultiThreadStopReason::SignalWithThread {
-                signal: Signal::SIGTRAP,
-                tid: System::current_thread(),
-            },
+            StopReason::UntrackedSoftwareBreak | StopReason::Other => {
+                MultiThreadStopReason::SignalWithThread {
+                    signal: Signal::SIGTRAP,
+                    tid: System::current_thread(),
+                }
+            }
         }
     }
 }
