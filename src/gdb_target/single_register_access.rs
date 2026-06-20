@@ -22,7 +22,7 @@ impl SingleRegisterAccess<()> for V5Target {
         let ctx = &self.exception_ctx;
         match reg_id {
             ArmRegisterID::Gpr(rid) => {
-                let Some(reg) = ctx.registers.get(rid as usize).copied() else {
+                let Some(&reg) = ctx.registers.get(rid as usize) else {
                     return Err(TargetError::NonFatal);
                 };
                 read_reg!(buf, reg)
@@ -31,7 +31,13 @@ impl SingleRegisterAccess<()> for V5Target {
             ArmRegisterID::Lr => read_reg!(buf, ctx.link_register),
             ArmRegisterID::Pc => read_reg!(buf, ctx.program_counter),
             ArmRegisterID::Cpsr => read_reg!(buf, ctx.cpsr.raw_value()),
-            _ => Err(TargetError::NonFatal),
+            ArmRegisterID::Fpr(rid) => {
+                let Some(&reg) = ctx.vfp_registers.get(rid as usize) else {
+                    return Err(TargetError::NonFatal);
+                };
+                read_reg!(buf, reg)
+            }
+            ArmRegisterID::Fpscr => read_reg!(buf, ctx.fpscr),
         }
     }
 
