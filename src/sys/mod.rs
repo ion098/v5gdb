@@ -8,10 +8,9 @@ use gdbstub::{
 };
 use snafu::Snafu;
 
-use crate::gdb_target::{
-    V5Target,
-    arch::{ArmRegisterID, ArmRegisters},
-    single_register_access::SavedRegister,
+use crate::{
+    exceptions::DebugEventContext,
+    gdb_target::{V5Target, arch::ArmRegisterID, single_register_access::SavedRegister},
 };
 
 cfg_if! {
@@ -58,14 +57,14 @@ pub trait DebuggerSystem {
     fn read_thread_name(tid: Tid, buf: &mut [u8]) -> Result<usize, SystemError>;
 
     /// Read all the saved registers of the given thread.
-    fn read_registers(tid: Tid) -> Result<ArmRegisters, SystemError>;
+    fn read_registers(tid: Tid) -> Result<DebugEventContext, SystemError>;
 
     /// Set the saved registers of the given thread to the given value.
     ///
     /// # Safety
     ///
     /// The given registers must be valid in the thread's current context.
-    unsafe fn write_registers(tid: Tid, registers: &ArmRegisters) -> Result<(), SystemError>;
+    unsafe fn write_registers(tid: Tid, registers: &DebugEventContext) -> Result<(), SystemError>;
 
     /// Read a single register from the thread's saved state.
     fn read_single_register(tid: Tid, id: ArmRegisterID) -> Result<SavedRegister, SystemError>;

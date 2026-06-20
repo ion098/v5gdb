@@ -6,11 +6,9 @@ use spin::Mutex;
 
 use self::api::{TaskHandle_t, TaskStatus_t, UBaseType_t, eTaskState, pdFALSE};
 use crate::{
-    gdb_target::{
-        V5Target,
-        arch::{ArmRegisterID, ArmRegisters},
-        single_register_access::SavedRegister,
-    },
+    cpu::ProgramStatus,
+    exceptions::DebugEventContext,
+    gdb_target::{V5Target, arch::ArmRegisterID, single_register_access::SavedRegister},
     sys::{
         DebuggerSystem, SystemError,
         freertos::api::{BaseContext, FPUContext, SavedTaskContextFPU},
@@ -62,21 +60,21 @@ impl DebuggerSystem for FreeRtosSystem {
             .is_some_and(|task| task.eCurrentState != eTaskState::DELETED)
     }
 
-    fn read_registers(tid: Tid) -> Result<ArmRegisters, SystemError> {
+    fn read_registers(tid: Tid) -> Result<DebugEventContext, SystemError> {
         let task = lookup_saved_task(tid)?;
 
         // SAFETY: The task is valid and not running.
         let ctx = unsafe { task.saved_context().read() };
 
-        Ok(ArmRegisters {
-            r: ctx.base.gp_registers,
-            sp: unsafe { task.sp() },
-            lr: ctx.base.lr,
-            pc: ctx.base.pc,
-            cpsr: ctx.base.spsr,
+        Ok(DebugEventContext {
+            registers: ctx.base.gp_registers,
+            stack_pointer: unsafe { task.sp() },
+            link_register: ctx.base.lr,
+            program_counter: ctx.base.pc,
+            cpsr: ProgramStatus::new_with_raw_value(ctx.base.spsr),
             // These unwraps will not panic because the two sub-arrays add together
             // to the correct total length.
-            d: [ctx.fpu.d0_d15, ctx.fpu.d16_d31]
+            vfp_registers: [ctx.fpu.d0_d15, ctx.fpu.d16_d31]
                 .as_flattened()
                 .try_into()
                 .unwrap(),
@@ -84,7 +82,7 @@ impl DebuggerSystem for FreeRtosSystem {
         })
     }
 
-    unsafe fn write_registers(tid: Tid, registers: &ArmRegisters) -> Result<(), SystemError> {
+    unsafe fn write_registers(tid: Tid, registers: &DebugEventContext) -> Result<(), SystemError> {
         let task = lookup_saved_task(tid)?;
 
         unsafe {
@@ -93,7 +91,7 @@ impl DebuggerSystem for FreeRtosSystem {
 
             // This will change the location of where the saved task context should be, so we have
             // to re-call `saved_context` to get the new location and write to it.
-            task.set_sp(registers.sp, false);
+            task.set_sp(registers.stack_pointer, false);
 
             // SAFETY: Caller guarantees this is valid state for the task.
             let ctx = task.saved_context();
@@ -102,15 +100,15 @@ impl DebuggerSystem for FreeRtosSystem {
                     fpscr: registers.fpscr,
                     // These unwraps will not panic because the range indexing returns
                     // the correct size of array.
-                    d16_d31: *registers.d[16..=31].as_array().unwrap(),
-                    d0_d15: *registers.d[0..=15].as_array().unwrap(),
+                    d16_d31: *registers.vfp_registers[16..=31].as_array().unwrap(),
+                    d0_d15: *registers.vfp_registers[0..=15].as_array().unwrap(),
                 },
                 BaseContext {
                     ulCriticalNesting: critical_nesting,
-                    gp_registers: registers.r,
-                    lr: registers.lr,
-                    pc: registers.pc,
-                    spsr: registers.cpsr,
+                    gp_registers: registers.registers,
+                    lr: registers.link_register,
+                    pc: registers.program_counter,
+                    spsr: registers.cpsr.raw_value(),
                 },
             ));
         };

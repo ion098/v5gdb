@@ -313,6 +313,7 @@ impl HwBreakpointManager {
         } else {
             self.mmio.write_lock_access(DEBUG_UNLOCK_MAGIC);
         }
+        debug_assert!(self.locked() == locked);
     }
 
     pub unsafe fn mmio(&self) -> &MmioDebugLogic<'_> {

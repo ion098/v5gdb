@@ -1,11 +1,8 @@
 use gdbstub::common::Tid;
 
 use crate::{
-    gdb_target::{
-        V5Target,
-        arch::{ArmRegisterID, ArmRegisters},
-        single_register_access::SavedRegister,
-    },
+    exceptions::DebugEventContext,
+    gdb_target::{V5Target, arch::ArmRegisterID, single_register_access::SavedRegister},
     sys::{DebuggerSystem, SystemError},
 };
 
@@ -35,12 +32,15 @@ impl DebuggerSystem for BareSystem {
     }
 
     #[inline(always)]
-    fn read_registers(_tid: Tid) -> Result<ArmRegisters, SystemError> {
+    fn read_registers(_tid: Tid) -> Result<DebugEventContext, SystemError> {
         Err(SystemError::NoSuchTid)
     }
 
     #[inline(always)]
-    unsafe fn write_registers(_tid: Tid, _registers: &ArmRegisters) -> Result<(), SystemError> {
+    unsafe fn write_registers(
+        _tid: Tid,
+        _registers: &DebugEventContext,
+    ) -> Result<(), SystemError> {
         Err(SystemError::NoSuchTid)
     }
 

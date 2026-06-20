@@ -3,7 +3,6 @@
 use core::convert::Infallible;
 
 use gdbstub::{
-    arch::Arch,
     common::Signal,
     stub::MultiThreadStopReason,
     target::{
@@ -25,10 +24,10 @@ use spin::Once;
 use zynq7000::devcfg;
 
 use crate::{
-    cpu::{ProgramStatus, debug::DebugEventReason},
+    cpu::{debug::DebugEventReason},
     exceptions::DebugEventContext,
     gdb_target::{
-        arch::{ArmBreakpointKind, ArmRegisters, ArmV7},
+        arch::{ArmBreakpointKind, ArmV7},
         breakpoint::{
             BreakpointError,
             hardware::{HwBreakpointManager, Specificity},
@@ -92,15 +91,22 @@ pub enum MonitorStatus {
 
 /// Receives callbacks from `gdbstub` and keeps track of state required to drive the debugger.
 pub struct V5Target {
+    /// The working copy of the CPU state, initialized by capturing the state of the program
+    /// when it hit the most recent breakpoint.
+    ///
+    /// Note that updating these fields will cause the debugger to apply those changes to the
+    /// program state upon resume.
     exception_ctx: DebugEventContext,
     pub monitor_status: MonitorStatus,
 
     /// Why the most recent debugger entry occurred.
     stop_reason: StopReason,
 
-    /// Indicates whether new software breakpoints should be enabled.
+    /// Indicates whether software breakpoints are temporarily disabled.
+    ///
+    /// If true, enabling new software breakpoints will be delayed until breakpoints are unpaused.
     breaks_paused: bool,
-    /// The list of breakpoints.
+    /// The list of software breakpoints.
     breaks: [Option<SwBreakpoint>; 16],
 
     hw_manager: HwBreakpointManager,
@@ -192,7 +198,7 @@ impl V5Target {
 
         log::debug!("Preparing single step operation");
 
-        let kind = if self.exception_ctx.spsr.thumb() {
+        let kind = if self.exception_ctx.cpsr.thumb() {
             ArmBreakpointKind::Thumb16
         } else {
             ArmBreakpointKind::Arm32
@@ -323,37 +329,15 @@ impl Target for V5Target {
 }
 
 impl SingleThreadBase for V5Target {
-    fn read_registers(&mut self, regs: &mut ArmRegisters) -> TargetResult<(), Self> {
+    fn read_registers(&mut self, regs: &mut DebugEventContext) -> TargetResult<(), Self> {
         log::info!("Reading all registers");
-
-        let ctx = &self.exception_ctx;
-        *regs = ArmRegisters {
-            r: ctx.registers,
-            sp: ctx.stack_pointer,
-            lr: ctx.link_register,
-            pc: ctx.program_counter,
-            d: ctx.vfp_registers,
-            fpscr: ctx.fpscr,
-            cpsr: ctx.spsr.raw_value(),
-        };
-
+        *regs = self.exception_ctx.clone();
         Ok(())
     }
 
-    fn write_registers(&mut self, regs: &<ArmV7 as Arch>::Registers) -> TargetResult<(), Self> {
+    fn write_registers(&mut self, regs: &DebugEventContext) -> TargetResult<(), Self> {
         log::info!("Writing all registers");
-
-        let ctx = &mut self.exception_ctx;
-        *ctx = DebugEventContext {
-            registers: regs.r,
-            stack_pointer: regs.sp,
-            link_register: regs.lr,
-            program_counter: regs.pc,
-            spsr: ProgramStatus::new_with_raw_value(regs.cpsr),
-            vfp_registers: regs.d,
-            fpscr: regs.fpscr,
-        };
-
+        self.exception_ctx = regs.clone();
         Ok(())
     }
 

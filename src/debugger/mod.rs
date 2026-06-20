@@ -28,16 +28,12 @@ use crate::{
 pub enum DebuggerError {
     #[snafu(context(false))]
     Io { source: TransportError },
+    #[snafu(context(false))]
     GdbStub {
-        inner: GdbStubError<Infallible, TransportError>,
+        source: GdbStubError<Infallible, TransportError>,
     },
 }
 
-impl From<GdbStubError<Infallible, TransportError>> for DebuggerError {
-    fn from(value: GdbStubError<Infallible, TransportError>) -> Self {
-        Self::GdbStub { inner: value }
-    }
-}
 
 /// Debugger manager.
 pub struct V5Debugger<S: Transport> {

@@ -4,9 +4,7 @@ use gdbstub::{
         TargetResult,
         ext::{
             base::{
-                multithread::{
-                    MultiThreadBase, MultiThreadResumeOps,
-                },
+                multithread::{MultiThreadBase, MultiThreadResumeOps},
                 single_register_access::SingleRegisterAccessOps,
                 singlethread::SingleThreadBase,
             },
@@ -16,11 +14,7 @@ use gdbstub::{
 };
 
 use crate::{
-    gdb_target::{
-        V5Target,
-        arch::ArmRegisters,
-    },
-    sys::{DebuggerSystem, System},
+    exceptions::DebugEventContext, gdb_target::V5Target, sys::{DebuggerSystem, System}
 };
 
 impl MultiThreadBase for V5Target {
@@ -41,7 +35,7 @@ impl MultiThreadBase for V5Target {
         Some(self)
     }
 
-    fn read_registers(&mut self, regs: &mut ArmRegisters, tid: Tid) -> TargetResult<(), Self> {
+    fn read_registers(&mut self, regs: &mut DebugEventContext, tid: Tid) -> TargetResult<(), Self> {
         if tid == System::current_thread() {
             <Self as SingleThreadBase>::read_registers(self, regs)
         } else {
@@ -50,7 +44,7 @@ impl MultiThreadBase for V5Target {
         }
     }
 
-    fn write_registers(&mut self, regs: &ArmRegisters, tid: Tid) -> TargetResult<(), Self> {
+    fn write_registers(&mut self, regs: &DebugEventContext, tid: Tid) -> TargetResult<(), Self> {
         if tid == System::current_thread() {
             <Self as SingleThreadBase>::write_registers(self, regs)
         } else {

@@ -14,6 +14,7 @@ pub mod vmsa;
 
 /// The status of an ARMv7-A CPU.
 #[bitfield(u32, debug, default = 0)]
+#[derive(PartialEq, Eq)]
 pub struct ProgramStatus {
     #[bit(31, rw)]
     negative: bool,

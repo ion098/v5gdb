@@ -30,7 +30,7 @@ impl SingleRegisterAccess<()> for V5Target {
             ArmRegisterID::Sp => read_reg!(buf, ctx.stack_pointer),
             ArmRegisterID::Lr => read_reg!(buf, ctx.link_register),
             ArmRegisterID::Pc => read_reg!(buf, ctx.program_counter),
-            ArmRegisterID::Cpsr => read_reg!(buf, ctx.spsr.raw_value()),
+            ArmRegisterID::Cpsr => read_reg!(buf, ctx.cpsr.raw_value()),
             _ => Err(TargetError::NonFatal),
         }
     }
@@ -62,7 +62,7 @@ impl SingleRegisterAccess<()> for V5Target {
             ArmRegisterID::Sp => write_reg!(&mut ctx.stack_pointer, u32, val),
             ArmRegisterID::Lr => write_reg!(&mut ctx.link_register, u32, val),
             ArmRegisterID::Pc => write_reg!(&mut ctx.program_counter, u32, val),
-            ArmRegisterID::Cpsr => write_reg!(ctx.spsr.raw_value_mut(), u32, val),
+            ArmRegisterID::Cpsr => write_reg!(ctx.cpsr.raw_value_mut(), u32, val),
             ArmRegisterID::Fpr(rid) => {
                 let Some(reg) = ctx.vfp_registers.get_mut(rid as usize) else {
                     return Err(TargetError::NonFatal);
