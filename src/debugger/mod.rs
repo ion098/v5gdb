@@ -289,7 +289,10 @@ where
                 let stop_reason: Option<SingleThreadStopReason<_>> = None;
                 Ok(gdb.interrupt_handled(target, stop_reason)?)
             }
-            GdbStubStateMachine::Disconnected(gdb) => Ok(gdb.return_to_idle()),
+            GdbStubStateMachine::Disconnected(gdb) => {
+                target.monitor_status = MonitorStatus::ResumingProgram;
+                Ok(gdb.return_to_idle())
+            },
         }
     }
 }
