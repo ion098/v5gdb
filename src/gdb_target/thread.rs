@@ -1,14 +1,13 @@
 use gdbstub::{
     common::Tid,
     target::{
-        TargetError, TargetResult,
+        TargetResult,
         ext::{
             base::{
                 multithread::{
-                    MultiThreadBase, MultiThreadResume, MultiThreadResumeOps,
-                    MultiThreadSingleStep, MultiThreadSingleStepOps,
+                    MultiThreadBase, MultiThreadResumeOps,
                 },
-                single_register_access::{SingleRegisterAccess, SingleRegisterAccessOps},
+                single_register_access::SingleRegisterAccessOps,
                 singlethread::SingleThreadBase,
             },
             thread_extra_info::{ThreadExtraInfo, ThreadExtraInfoOps},
@@ -19,8 +18,7 @@ use gdbstub::{
 use crate::{
     gdb_target::{
         V5Target,
-        arch::{ArmRegisterID, ArmRegisters},
-        single_register_access::SavedRegister,
+        arch::ArmRegisters,
     },
     sys::{DebuggerSystem, System},
 };
