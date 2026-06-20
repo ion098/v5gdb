@@ -48,12 +48,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let known_gdb_names = ["arm-none-eabi-gdb", "gdb-multiarch", "gdb"];
-    let mut resolved_gdb = None;
-    for name in known_gdb_names {
-        if let Ok(path) = which(name) {
-            resolved_gdb = Some(path);
-        }
-    }
+    let resolved_gdb = known_gdb_names.into_iter().find_map(|n| which(n).ok());
 
     let Some(resolved_gdb) = resolved_gdb else {
         eprintln!("Error: One of the following GDB executables must be installed.");
