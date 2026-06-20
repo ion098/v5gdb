@@ -198,18 +198,13 @@ pub(crate) mod arm {
         ///
         /// # Safety
         ///
-        /// The caller must ensure the return address is valid for reads. This might not be the case
-        /// if, for example, the exception was a prefetch abort caused by the instruction
+        /// The caller must ensure the return address is valid for volatile reads. This might not be
+        /// the case if, for example, the exception was a prefetch abort caused by the instruction
         /// being inaccessible.
         #[must_use]
         pub unsafe fn read_instr(&self) -> Instruction {
-            if self.cpsr.thumb() {
-                let ptr = self.program_counter as *mut u16;
-                Instruction::Thumb(unsafe { ptr.read_volatile() })
-            } else {
-                let ptr = self.program_counter as *mut u32;
-                Instruction::Arm(unsafe { ptr.read_volatile() })
-            }
+            let ptr = self.program_counter as *mut u32;
+            unsafe { Instruction::read(ptr, self.cpsr.thumb()) }
         }
 
         /// Load the address or instruction which the faulting instruction attempted to operate on.

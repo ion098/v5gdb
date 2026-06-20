@@ -25,7 +25,7 @@ impl SwBreakpoint {
     /// Encoding of an ARM32 `bkpt` instruction.
     pub const ARM_INSTR: Instruction = Instruction::Arm(0xE120_0070);
     /// Encoding of a Thumb `bkpt` instruction.
-    pub const THUMB_INSTR: Instruction = Instruction::Thumb(0xBE00);
+    pub const THUMB_INSTR: Instruction = Instruction::Thumb16(0xBE00);
 
     /// Create a new software breakpoint targeting the given address.
     ///
@@ -64,9 +64,10 @@ impl SwBreakpoint {
 
         if enabled {
             // If the old instruction was Thumb, then our `bkpt` replacement needs to be Thumb too.
-            let bkpt_instr = match self.instr_backup {
-                Instruction::Arm(_) => Self::ARM_INSTR,
-                Instruction::Thumb(_) => Self::THUMB_INSTR,
+            let bkpt_instr = if self.instr_backup.is_thumb() {
+                Self::THUMB_INSTR
+            } else {
+                Self::ARM_INSTR
             };
 
             unsafe {
