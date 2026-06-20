@@ -217,16 +217,18 @@ where
         assert!(self.internal_breaks.is_none());
 
         let exit_func = vexSystemExitRequest as *const () as u32;
+        let is_thumb = (exit_func & 1) != 0;
+        log::debug!("Register pre-exit handler (thumb={is_thumb})");
 
         let internal_breaks = [(
             InternalBreakpoint::SystemExitRequest,
-            exit_func & !1, // Clear thumb bit, if any
+            exit_func & !1,
         )];
 
         for (_id, addr) in internal_breaks {
             unsafe {
                 self.target
-                    .register_sw_breakpoint(addr, false, true)
+                    .register_sw_breakpoint(addr, is_thumb, true)
                     .unwrap();
             }
         }
