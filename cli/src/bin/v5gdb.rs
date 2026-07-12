@@ -137,7 +137,10 @@ async fn serve_device_serial(
                                 incoming_bytes = &incoming_bytes[1..];
                                 decoder.reset();
                             },
-                            _ => {}
+                            Ok(None) => {
+                                // The frame is split across reads, wait for more data.
+                                break;
+                            }
                         }
                     }
                 }
