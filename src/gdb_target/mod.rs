@@ -24,7 +24,7 @@ use spin::Once;
 use zynq7000::devcfg;
 
 use crate::{
-    cpu::{debug::DebugEventReason},
+    cpu::debug::DebugEventReason,
     exceptions::DebugEventContext,
     gdb_target::{
         arch::{ArmBreakpointKind, ArmV7},
@@ -45,6 +45,9 @@ pub mod resume;
 pub mod single_register_access;
 pub mod thread;
 
+/// A fixed address that never matches real code.
+const ASYNC_HALT_SENTINEL: u32 = 0xFFFF_FFFC;
+
 /// Why execution stopped at the current PC.
 ///
 /// Helps determine what stop reason to send to GDB and how to set up the debug console.
@@ -56,6 +59,10 @@ pub enum StopReason {
     TrackedSoftwareBreak { id: usize },
     /// A `bkpt` instruction hard-coded in the program source code was triggered.
     UntrackedSoftwareBreak,
+    /// The host asynchronously requested a halt while the program was running.
+    ///
+    /// This can happen if the user presses Ctrl-C in GDB to pause the program.
+    Interrupt,
     /// The program stopped for some other reason.
     ///
     /// It's probably only possible for this to be a watchpoint since most other debug events (like
@@ -117,6 +124,10 @@ pub struct V5Target {
     /// If set, breakpoints are being used to single step. Report any hardware breaks as single
     /// steps instead of normal breakpoints.
     single_step_request: Option<SingleStepRequest>,
+
+    /// If set, the next instruction executed in user code will trigger entry into the debug
+    /// monitor and be reported to GDB as SIGINT.
+    interrupt_pending: bool,
 }
 
 impl V5Target {
@@ -129,6 +140,7 @@ impl V5Target {
             breaks_paused: false,
             breaks: [None; _],
             single_step_request: None,
+            interrupt_pending: false,
             original_hw_lock_state: false,
             hw_manager: HwBreakpointManager::setup(devcfg),
         }
@@ -165,6 +177,7 @@ impl V5Target {
         self.monitor_status = MonitorStatus::Active;
         self.classify_stop();
         self.finalize_single_step();
+        self.finalize_interrupt();
         self.fixup_manual_bkpt();
 
         self.stop_reason
@@ -191,7 +204,7 @@ impl V5Target {
 
     /// Create a breakpoint that will stop the debugger after a single instruction has been
     /// executed.
-    pub fn setup_single_step(&mut self) -> Result<(), BreakpointError> {
+    pub fn request_single_step(&mut self) -> Result<(), BreakpointError> {
         if self.single_step_request.is_some() {
             return Ok(());
         }
@@ -218,6 +231,68 @@ impl V5Target {
         Ok(())
     }
 
+    /// Arm an asynchronous halt in response to an interrupt from GDB.
+    ///
+    /// Calling this installs a hardware breakpoint which fires on any instructions on which the CPU
+    /// is running in user/system/supervisor mode, causing the program to enter into the debug
+    /// monitor as soon as any in-progress exceptions have finished. Once stopped, the event is
+    /// reported to GDB as SIGINT.
+    ///
+    /// This may be called from an interrupt context.
+    ///
+    /// This operation can be considered a stronger variant of [`Self::request_single_step`] which
+    /// pauses the program on the *current* instruction rather than the next one. It can be used to
+    /// to break out of situations that a single step would not be able to handle, such as a
+    /// self-branch (`b .`) in which the program becomes stuck and never advances to the next
+    /// instruction.
+    pub fn request_interrupt(&mut self) {
+        // No need to register another interrupt breakpoint if we already have one ready.
+        if self.interrupt_pending {
+            return;
+        }
+
+        let was_locked = self.hw_manager.locked();
+        self.hw_manager.set_locked(false);
+
+        // We always reserve a slot for single steps which we can reuse for this interrupt. If a
+        // single step is already active we'll just overwrite that breakpoint slot.
+        if let Some(single_step) = self.single_step_request {
+            self.hw_manager.remove_breakpoint_at(
+                single_step.target_addr,
+                Specificity::Mismatch,
+                single_step.kind,
+            );
+        }
+
+        let result = self.hw_manager.add_breakpoint_at(
+            ASYNC_HALT_SENTINEL,
+            Specificity::Mismatch,
+            // The breakpoint kind doesn't really matter here since it just describes how large the
+            // dead-zone region we specify is, but the one we specify (ASYNC_HALT_SENTINEL) wouldn't
+            // contain either 2-byte or 4-byte instructions.
+            ArmBreakpointKind::Arm32,
+        );
+
+        self.hw_manager.set_locked(was_locked);
+
+        // This shouldn't fail because we pass a known good address and ensure there's enough
+        // available breakpoint slots.
+        result.unwrap();
+        self.interrupt_pending = true;
+    }
+
+    /// Remove a breakpoint installed by [`Self::request_interrupt`], if any.
+    fn finalize_interrupt(&mut self) {
+        if self.interrupt_pending {
+            self.hw_manager.remove_breakpoint_at(
+                ASYNC_HALT_SENTINEL,
+                Specificity::Mismatch,
+                ArmBreakpointKind::Arm32,
+            );
+            self.interrupt_pending = false;
+        }
+    }
+
     /// Mark the pending single step request (if any) as completed and clean up its state.
     fn finalize_single_step(&mut self) {
         // If we previously wanted to single step, we can permanently remove the breakpoint that
@@ -236,6 +311,10 @@ impl V5Target {
     fn classify_stop(&mut self) {
         let pc = self.exception_ctx.program_counter;
         self.stop_reason = match self.hw_manager.last_break_reason() {
+            // A hardware break while an async halt is armed is the sentinel mismatch firing on the
+            // first user instruction, i.e. the response to a Ctrl-C. (The mismatch fires
+            // immediately on resume, so when armed it's effectively always the cause.)
+            Some(DebugEventReason::Breakpoint) if self.interrupt_pending => StopReason::Interrupt,
             Some(DebugEventReason::Breakpoint) => StopReason::HardwareBreak,
             Some(DebugEventReason::BkptInstr) => match self.query_sw_breakpoint(pc) {
                 Some(id) => StopReason::TrackedSoftwareBreak { id },
@@ -299,6 +378,12 @@ impl V5Target {
                     tid: System::current_thread(),
                 }
             }
+            // A host-requested async halt (GDB Ctrl-C) is reported as SIGINT, which is what GDB is
+            // waiting for after sending the interrupt byte.
+            StopReason::Interrupt => MultiThreadStopReason::SignalWithThread {
+                signal: Signal::SIGINT,
+                tid: System::current_thread(),
+            },
         }
     }
 }

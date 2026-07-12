@@ -34,7 +34,6 @@ pub enum DebuggerError {
     },
 }
 
-
 /// Debugger manager.
 pub struct V5Debugger<S: Transport> {
     session: Mutex<DebugSession<'static, S>>,
@@ -100,6 +99,26 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         }
 
         session.target.leave_breakpoint(ctx)
+    }
+
+    fn poll(&self) {
+        // This runs in an interrupt context so it must be non-blocking and must not write to
+        // serial. Serial writes aren't IRQ-safe, and logger tend to write to stdout (serial ch1),
+        // so also avoid logging here.
+
+        // A failed try_lock means the monitor is active. In that case the serial stream carries
+        // real GDB protocol traffic so we shouldn't touch it.
+        let Some(mut session) = self.session.try_lock() else {
+            return;
+        };
+
+        // While the program is running, GDB can send `0x03` (Interrupt) to request a pause.
+        const CTRL_C: i32 = 0x03;
+        if unsafe { vex_sdk::vexSerialReadChar(1) } != CTRL_C {
+            return;
+        }
+
+        session.target.request_interrupt();
     }
 }
 
@@ -220,10 +239,7 @@ where
         let is_thumb = (exit_func & 1) != 0;
         log::debug!("Register pre-exit handler (thumb={is_thumb})");
 
-        let internal_breaks = [(
-            InternalBreakpoint::SystemExitRequest,
-            exit_func & !1,
-        )];
+        let internal_breaks = [(InternalBreakpoint::SystemExitRequest, exit_func & !1)];
 
         for (_id, addr) in internal_breaks {
             unsafe {
@@ -292,7 +308,7 @@ where
             GdbStubStateMachine::Disconnected(gdb) => {
                 target.monitor_status = MonitorStatus::ResumingProgram;
                 Ok(gdb.return_to_idle())
-            },
+            }
         }
     }
 }
