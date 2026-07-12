@@ -69,6 +69,10 @@ pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
 
         let length = encoder.finalize();
 
+        // When the payload is exactly 254 bytes long, the COBS encoder will start a new 0-sized
+        // block at index `length`, which means the pre-zeroed byte from when we first created the
+        // buffer might not still be there. Thus we have to explicitly add it back in.
+        out_buf[length] = 0;
         write_raw(&out_buf[..=length]); // Include `0` packet delimiter.
     }
 }
