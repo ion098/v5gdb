@@ -82,7 +82,7 @@ impl RegId for ArmRegisterID {
             14 => Self::Lr,
             15 => Self::Pc,
             25 => Self::Cpsr,
-            26..=57 => Self::Fpr((id - 17) as u8),
+            26..=57 => Self::Fpr((id - 26) as u8),
             58 => Self::Fpscr,
             _ => return None,
         };
