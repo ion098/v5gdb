@@ -110,7 +110,7 @@ pub(crate) mod arm {
         ".set FREERTOS, 1",
         #[cfg(feature = "pros")]
         ".set PROS, 1",
-        include_str!("./overlay.S"),
+        include_str!("./overlay.s"),
         options(raw),
     );
 
@@ -135,7 +135,6 @@ pub(crate) mod arm {
     ///
     /// The callee must always resume the system scheduler after calling this function.
     #[unsafe(export_name = "v5gdb_handle_debug_event")]
-    #[cfg_attr(target_os = "vexos", instruction_set(arm::a32))]
     pub unsafe extern "aapcs" fn handle_debug_event(ctx: *mut DebugEventContext) -> bool {
         unsafe { DEBUGGER.get().unwrap().handle_debug_event(&mut *ctx) }
     }
@@ -178,7 +177,6 @@ pub(crate) mod arm {
     /// This runs in interrupt context on VEXos's 8 KiB IRQ-mode stack, so it must remain fairly
     /// lightweight with no allocation or blocking or calls to non-thread-safe functions.
     #[unsafe(export_name = "v5gdb_irq_poll")]
-    #[cfg_attr(target_os = "vexos", instruction_set(arm::a32))]
     pub extern "aapcs" fn irq_poll() {
         IRQ_POLL_COUNT.fetch_add(1, Ordering::Relaxed);
 
