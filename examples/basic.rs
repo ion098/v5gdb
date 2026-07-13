@@ -21,8 +21,13 @@ fn fib(n: u64) -> u64 {
 
 #[vexide::main]
 async fn main(_peripherals: Peripherals) {
+    let log_level = if option_env!("DEBUG").is_some() {
+        log::Level::max()
+    } else {
+        log::Level::Warn
+    };
     colored::control::set_override(true);
-    clang_log::init(log::Level::max(), "v5gdb(basic)");
+    clang_log::init(log_level, "v5gdb(basic)");
 
     v5gdb::install(V5Debugger::new(StdioTransport));
     v5gdb::breakpoint!();
