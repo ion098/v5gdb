@@ -60,8 +60,8 @@ pub fn install_override() {
     // and postconditions.
     unsafe {
         super::redirect_function(
-            vex_sdk::vexCompetitionStatus as *mut u32,
-            self::read_status as *const u32,
+            vex_sdk::vexCompetitionStatus as *mut (),
+            self::read_status as *const (),
         );
     }
 }

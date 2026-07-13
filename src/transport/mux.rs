@@ -20,13 +20,13 @@ use crate::sdk::jumptable;
 pub fn enable_auto_muxing() {
     unsafe {
         crate::sdk::redirect_function(
-            vex_sdk::vexSerialWriteBuffer as *mut u32,
-            user_write_buffer as *const u32,
+            vex_sdk::vexSerialWriteBuffer as *mut (),
+            user_write_buffer as *const (),
         );
 
         crate::sdk::redirect_function(
-            vex_sdk::vexSerialWriteChar as *mut u32,
-            user_write_char as *const u32,
+            vex_sdk::vexSerialWriteChar as *mut (),
+            user_write_char as *const (),
         );
     }
 }

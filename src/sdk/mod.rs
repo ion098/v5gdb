@@ -13,42 +13,65 @@ use crate::cpu::cache::{self, CacheTarget};
 
 pub mod competition;
 
-global_asm!(include_str!("./sdk_trampoline.S"), options(raw));
+global_asm!(include_str!("./sdk_trampoline.s"), options(raw));
 unsafe extern "C" {
-    /// A position-independent function that jumps to another (configurable) function.
-    ///
-    /// The function's body spans from the `v5gdb_sdk_trampoline` symbol until
-    /// [`v5gdb_sdk_trampoline_end`]. When the trampoline routine is called, it will branch to the
-    /// function pointer placed immediately after its body.
-    fn v5gdb_sdk_trampoline();
-    static v5gdb_sdk_trampoline_end: u32;
+    /// A position-independent ARM function that jumps to another (configurable) function.
+    fn v5gdb_sdk_trampoline_arm();
+    /// Marks the end of the code for [`v5gdb_sdk_trampoline_arm`].
+    static v5gdb_sdk_trampoline_arm_end: u32;
+    /// A position-independent Thumb function that jumps to another (configurable) function.
+    fn v5gdb_sdk_trampoline_thumb();
+    /// Marks the end of the code for [`v5gdb_sdk_trampoline_thumb`].
+    static v5gdb_sdk_trampoline_thumb_end: u32;
 }
 
 /// Overwrite the target function to branch to the given proxy when called instead of performing
 /// its original functionality.
 ///
+/// The target function's instruction set is detected via its Thumb bit and a matching trampoline is
+/// installed.
+///
 /// # Safety
 ///
-/// The target function must be at least 3 words long and valid to write to. The destination
-/// function must be valid to call in all the same situations as the target function and also have
-/// the same signature as it.
-pub unsafe fn redirect_function(target: *mut u32, destination: *const u32) {
-    let trampoline_ptr = v5gdb_sdk_trampoline as *const u32;
-    let trampoline_len =
-        unsafe { (&raw const v5gdb_sdk_trampoline_end).offset_from_unsigned(trampoline_ptr) };
-    let destination_ptr = unsafe { target.add(trampoline_len).cast() };
+/// The target function must be at least 3 words long, properly aligned for its instruction set, and
+/// valid to write to. The destination function must be valid to call in all the same situations as
+/// the target function and also have the same signature as it.
+pub unsafe fn redirect_function(target: *mut (), destination: *const ()) {
+    const THUMB_BIT: usize = 0b1;
+    let is_thumb = (target as usize) & THUMB_BIT != 0;
+
+    let (trampoline_fn, trampoline_end) = if is_thumb {
+        (
+            v5gdb_sdk_trampoline_thumb as unsafe extern "C" fn(),
+            &raw const v5gdb_sdk_trampoline_thumb_end,
+        )
+    } else {
+        (
+            v5gdb_sdk_trampoline_arm as unsafe extern "C" fn(),
+            &raw const v5gdb_sdk_trampoline_arm_end,
+        )
+    };
+
+    // We cast to u16 since the target function may be a 2-byte aligned Thumb function.
+    let trampoline_src = ((trampoline_fn as usize) & !THUMB_BIT) as *const u16;
+    let write_addr = ((target as usize) & !THUMB_BIT) as *mut u16;
+
+    let code_len = (trampoline_end as usize) - (trampoline_src as usize);
+    let destination_slot = unsafe { write_addr.add(code_len) };
 
     unsafe {
-        ptr::copy_nonoverlapping(trampoline_ptr, target, trampoline_len);
-        ptr::write(destination_ptr, destination);
+        ptr::copy_nonoverlapping(trampoline_src, write_addr, code_len);
+        // Keep the destination's Thumb bit intact so the trampoline's `bx` enters it in the
+        // correct instruction set.
+        ptr::write_unaligned(destination_slot.cast::<u32>(), destination as u32);
     }
 
     dsb();
     isb();
 
     // Sync both start and end, in case the function crosses a cache line.
-    cache::sync_instruction(CacheTarget::Address(target as u32));
-    cache::sync_instruction(CacheTarget::Address(destination_ptr as u32));
+    cache::sync_instruction(CacheTarget::Address(write_addr as u32));
+    cache::sync_instruction(CacheTarget::Address(destination_slot as u32));
 }
 
 /// Directly access VEX SDK functions over the jump table without their wrappers.
