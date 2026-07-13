@@ -12,7 +12,7 @@ use gdbstub::{
 };
 use snafu::Snafu;
 use spin::{Mutex, MutexGuard};
-use static_cell::StaticCell;
+use static_cell::ConstStaticCell;
 use vex_sdk::vexSystemExitRequest;
 use zynq7000::devcfg;
 
@@ -47,12 +47,11 @@ impl<S: Transport> V5Debugger<S> {
     #[must_use]
     pub fn new(stream: S) -> Self {
         const PACKET_BUFFER_SIZE: usize = 4096;
-        // Stored as a global to help limit stack usage.
-        static PACKET_BUFFER: StaticCell<[u8; PACKET_BUFFER_SIZE]> = StaticCell::new();
+        // Stored as a global (in .bss) to help limit stack usage.
+        static PACKET_BUFFER: ConstStaticCell<[u8; PACKET_BUFFER_SIZE]> =
+            ConstStaticCell::new([0; PACKET_BUFFER_SIZE]);
 
-        let pkt_buffer = PACKET_BUFFER
-            .try_init_with(|| [0; _])
-            .expect("Tried to claim packet buffer twice");
+        let pkt_buffer = PACKET_BUFFER.take();
 
         let target = V5Target::new(&mut unsafe { devcfg::Registers::new_mmio_fixed() });
 
