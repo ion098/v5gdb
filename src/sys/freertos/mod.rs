@@ -204,8 +204,12 @@ impl DebuggerSystem for FreeRtosSystem {
                 for task in scan_tasks() {
                     let marker = if task.xHandle == current { "*" } else { " " };
                     let id = task.xTaskNumber;
-                    // SAFETY: FreeRTOS guarantees this string is valid.
-                    let name = unsafe { CStr::from_ptr(task.pcTaskName) };
+                    let name = if task.pcTaskName.is_null() {
+                        c"<none>"
+                    } else {
+                        // SAFETY: FreeRTOS guarantees this string is valid.
+                        unsafe { CStr::from_ptr(task.pcTaskName) }
+                    };
 
                     let state = match task.eCurrentState {
                         eTaskState::BLOCKED => "Blocked".style(Style::new().yellow()),
