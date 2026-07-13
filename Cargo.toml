@@ -37,6 +37,12 @@ opt-level = "z"
 lto = false
 debug = true
 
+[profile.dev-opt]
+inherits = "dev"
+
+[profile.dev-opt.package."*"]
+opt-level = "z"
+
 # These fields configure default behavior for uploading examples with `cargo v5`.
 [package.metadata.v5]
 upload-strategy = "differential"
