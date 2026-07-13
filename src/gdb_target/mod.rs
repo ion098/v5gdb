@@ -268,8 +268,8 @@ impl V5Target {
             ASYNC_HALT_SENTINEL,
             Specificity::Mismatch,
             // The breakpoint kind doesn't really matter here since it just describes how large the
-            // dead-zone region we specify is, but the one we specify (ASYNC_HALT_SENTINEL) wouldn't
-            // contain either 2-byte or 4-byte instructions.
+            // dead-zone region we specify is, but the one we specify (ASYNC_HALT_SENTINEL)
+            // wouldn't contain either 2-byte or 4-byte instructions.
             ArmBreakpointKind::Arm32,
         );
 
@@ -410,6 +410,12 @@ impl Target for V5Target {
 
     fn support_memory_map(&mut self) -> Option<MemoryMapOps<'_, Self>> {
         Some(self)
+    }
+
+    fn use_no_ack_mode(&self) -> bool {
+        // This helps reconnection work properly. When GDB reconnects, it doesn't know if no-ack is
+        // already on. If it is on, GDB will think v5gdb just isn't getting its packets.
+        false
     }
 }
 

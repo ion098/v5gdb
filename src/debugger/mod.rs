@@ -306,7 +306,12 @@ where
                 Ok(gdb.interrupt_handled(target, stop_reason)?)
             }
             GdbStubStateMachine::Disconnected(gdb) => {
-                target.monitor_status = MonitorStatus::ResumingProgram;
+                // If we're about to exit the program, then GDB is probably disconnecting to let us
+                // do that. In that case, unpause and actually exit. Otherwise, stay in the debug
+                // monitor so a new GDB instance can pick up where we left off.
+                if target.monitor_status == MonitorStatus::Exiting {
+                    target.monitor_status = MonitorStatus::ResumingProgram;
+                }
                 Ok(gdb.return_to_idle())
             }
         }
