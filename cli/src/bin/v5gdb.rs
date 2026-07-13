@@ -69,7 +69,49 @@ async fn main() -> anyhow::Result<()> {
     cmd.arg("--eval-command=target remote :35537");
 
     let mut gdb = cmd.spawn()?;
-    gdb.wait().await?;
+
+    cfg_select! {
+        // On Unix, ignore SIGINT (Ctrl-C) since it's delivered to the whole foreground process
+        // group including GDB, which has its own logic to handle signals.
+        unix => {
+            use tokio::signal::unix::{SignalKind, signal};
+
+            let mut sigint = signal(SignalKind::interrupt())?;
+            let mut sigterm = signal(SignalKind::terminate())?;
+
+            loop {
+                tokio::select! {
+                    status = gdb.wait() => {
+                        status?;
+                        break;
+                    }
+                    _ = sigint.recv() => {}
+                    _ = sigterm.recv() => {}
+                }
+            }
+        }
+        // It's similar on Windows but we receive a Ctrl-C event / a Ctrl-Break event instead.
+        windows => {
+            use tokio::signal::windows::{ctrl_break, ctrl_c};
+
+            let mut ctrl_c = ctrl_c()?;
+            let mut ctrl_break = ctrl_break()?;
+
+            loop {
+                tokio::select! {
+                    status = gdb.wait() => {
+                        status?;
+                        break;
+                    }
+                    _ = ctrl_c.recv() => {}
+                    _ = ctrl_break.recv() => {}
+                }
+            }
+        }
+        _ => {
+            gdb.wait().await?;
+        }
+    }
 
     Ok(())
 }
