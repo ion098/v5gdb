@@ -56,7 +56,8 @@ pub unsafe fn redirect_function(target: *mut (), destination: *const ()) {
     let trampoline_src = ((trampoline_fn as usize) & !THUMB_BIT) as *const u16;
     let write_addr = ((target as usize) & !THUMB_BIT) as *mut u16;
 
-    let code_len = (trampoline_end as usize) - (trampoline_src as usize);
+    let code_len_bytes = (trampoline_end as usize) - (trampoline_src as usize);
+    let code_len = code_len_bytes / size_of::<u16>();
     let destination_slot = unsafe { write_addr.add(code_len) };
 
     unsafe {
