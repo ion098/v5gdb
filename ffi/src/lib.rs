@@ -77,14 +77,22 @@ impl Connection for TransportImpl {
     fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
         unsafe {
             let error = (self.write_buf)(self.data, buf.as_ptr(), buf.len());
-            error.is_null().ok_or_else(|| wrap_err(error))
+            if error.is_null() {
+                Ok(())
+            } else {
+                Err(wrap_err(error))
+            }
         }
     }
 
     fn flush(&mut self) -> Result<(), Self::Error> {
         unsafe {
             let error = (self.flush)(self.data);
-            error.is_null().ok_or_else(|| wrap_err(error))
+            if error.is_null() {
+                Ok(())
+            } else {
+                Err(wrap_err(error))
+            }
         }
     }
 
