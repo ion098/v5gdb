@@ -153,7 +153,11 @@ fn build(target: FfiTarget, opts: Vec<String>) {
     let target_args: &[&str] = match target {
         // Normal hard-float build, but avoid building std to prevent accidentally using the wrong
         // allocator. Rust's std port will try to manage the heap, but PROS is already doing that.
-        FfiTarget::Pros => &["--target=armv7a-vex-v5", "-Zbuild-std=core", "-Fv5gdb/pros"],
+        FfiTarget::Pros => &[
+            "--target=armv7a-none-eabihf",
+            "-Zbuild-std=core",
+            "-Fv5gdb/pros",
+        ],
         // A soft-float target is used to match VEXcode's ABI behavior.
         FfiTarget::Vexcode => &["--target=armv7a-none-eabi", "-Zbuild-std=core"],
     };
