@@ -195,7 +195,12 @@ async fn serve_device_serial(
                             println!("< {}", String::from_utf8_lossy(&program_input[..size]));
                         }
 
-                        connection.write_user(&program_input[..size]).await.unwrap();
+                        if let Err(err) = connection.write_user(&program_input[..size]).await {
+                            // The device was likely unplugged. Exit cleanly instead of
+                            // panicking on the failed write.
+                            eprintln!("Device disconnected: {err}");
+                            break;
+                        }
                     }
                     _ => {}
                 }
