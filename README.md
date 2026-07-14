@@ -14,20 +14,22 @@ Please read the [user manual]!
 
 Here are the features of v5gdb that you can use today:
 
-- Debug server usable by the `gdb` command line tool
-- Supports multiple methods of communication with a debugger client running on the user's PC
-- Compatibility with vexide and PROS frameworks
-- Supports remote management of dynamically-placed software/hardware breakpoints
+- Connect to your VEX V5 robot using GDB Remote Debugging
+- Easily customize how v5gdb communicates with your PC
+- Fully compatible with vexide and PROS frameworks
+- Remotely view what's stored in variables and manage dynamically-placed software/hardware breakpoints
 - Single-step through instructions and lines of code
-- Easy to configure and enable via Rust and C++ APIs
+- Pause your program in arbitrary locations by pressing Ctrl-C
+- Simple to configure and enable via Rust and C++ APIs
+- Basic support for thread-aware debugging (requires FreeRTOS)
 
 ## Future Goals
 
 Here are the features of v5gdb that aren't done yet or are planned for the future:
 
-- Easy to add to existing projects via a Rust crate and PROS template (for now, see the install instructions in the [user manual])
-- Step through inactive PROS tasks (right now you can only step through the task that caused the most recent breakpoint)
+- Easy to add to existing projects via a Rust crate on Crates.io and PROS template depot (for now, manually build v5gdb using the instructions in the [user manual])
 - Compatibility with VEXcode framework (right now it crashes)
+  - TBD on whether thread-aware debugging is possible for VEXcode
 
 ## Design
 
