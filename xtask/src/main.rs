@@ -151,10 +151,14 @@ fn test() {
 
 fn build(target: FfiTarget, opts: Vec<String>) {
     let target_args: &[&str] = match target {
-        // Normal hard-float build, but avoid building std to prevent accidentally using the wrong
-        // allocator. Rust's std port will try to manage the heap, but PROS is already doing that.
         FfiTarget::Pros => &[
-            "--target=armv7a-none-eabihf",
+            // Use vex-v5 instead of none-eabihf so that extern "System" functions resolve to the
+            // soft-float AAPCS ABI that VEXos uses.
+            "--target=armv7a-vex-v5",
+            // HACK(PROS): PROS programs hang when v5gdb is built for Thumb. (#25)
+            r#"--config=target."cfg(true)".rustflags=["-Ctarget-feature=-thumb-mode"]"#,
+            // Avoid building std to prevent accidentally using the wrong allocator. Rust's std
+            // port will try to manage the heap, but PROS is already doing that.
             "-Zbuild-std=core",
             "-Fv5gdb/pros",
         ],
