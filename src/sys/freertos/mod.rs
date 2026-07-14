@@ -72,12 +72,7 @@ impl DebuggerSystem for FreeRtosSystem {
             link_register: ctx.base.lr,
             program_counter: ctx.base.pc,
             cpsr: ProgramStatus::new_with_raw_value(ctx.base.spsr),
-            // These unwraps will not panic because the two sub-arrays add together
-            // to the correct total length.
-            vfp_registers: [ctx.fpu.d0_d15, ctx.fpu.d16_d31]
-                .as_flattened()
-                .try_into()
-                .unwrap(),
+            vfp_registers: bytemuck::must_cast([ctx.fpu.d0_d15, ctx.fpu.d16_d31]),
             fpscr: ctx.fpu.fpscr,
         })
     }
@@ -93,15 +88,18 @@ impl DebuggerSystem for FreeRtosSystem {
             // to re-call `saved_context` to get the new location and write to it.
             task.set_sp(registers.stack_pointer, false);
 
+            // FP registers are represented as u32s since they have a lower alignment.
+            type Reg = [u32; 2];
+            let [d0_d15, d16_d31]: &[[Reg; 16]; 2] =
+                bytemuck::must_cast_ref(&registers.vfp_registers);
+
             // SAFETY: Caller guarantees this is valid state for the task.
             let ctx = task.saved_context();
             ctx.write(SavedTaskContextFPU::new(
                 FPUContext {
                     fpscr: registers.fpscr,
-                    // These unwraps will not panic because the range indexing returns
-                    // the correct size of array.
-                    d16_d31: *registers.vfp_registers[16..=31].as_array().unwrap(),
-                    d0_d15: *registers.vfp_registers[0..=15].as_array().unwrap(),
+                    d16_d31: *d16_d31,
+                    d0_d15: *d0_d15,
                 },
                 BaseContext {
                     ulCriticalNesting: critical_nesting,
@@ -127,11 +125,11 @@ impl DebuggerSystem for FreeRtosSystem {
                 ArmRegisterID::Pc => SavedRegister::U32((*ctx).base.pc),
                 ArmRegisterID::Cpsr => SavedRegister::U32((*ctx).base.spsr),
                 ArmRegisterID::Fpr(i) => SavedRegister::U64({
-                    if let Some(i) = i.checked_sub(16) {
+                    bytemuck::must_cast(if let Some(i) = i.checked_sub(16) {
                         (*ctx).fpu.d16_d31[i as usize]
                     } else {
                         (*ctx).fpu.d0_d15[i as usize]
-                    }
+                    })
                 }),
                 ArmRegisterID::Fpscr => SavedRegister::U32((*ctx).fpu.fpscr),
                 ArmRegisterID::Sp => SavedRegister::U32(task.sp()),
@@ -155,9 +153,9 @@ impl DebuggerSystem for FreeRtosSystem {
                 ArmRegisterID::Cpsr => (*ctx).base.spsr = value.unwrap_u32(),
                 ArmRegisterID::Fpr(i) => {
                     if let Some(i) = i.checked_sub(16) {
-                        (*ctx).fpu.d16_d31[i as usize] = value.unwrap_u64();
+                        (*ctx).fpu.d16_d31[i as usize] = bytemuck::must_cast(value.unwrap_u64());
                     } else {
-                        (*ctx).fpu.d0_d15[i as usize] = value.unwrap_u64();
+                        (*ctx).fpu.d0_d15[i as usize] = bytemuck::must_cast(value.unwrap_u64());
                     }
                 }
                 ArmRegisterID::Fpscr => (*ctx).fpu.fpscr = value.unwrap_u32(),

@@ -180,8 +180,8 @@ impl SavedTaskContextFPU {
 #[repr(C)]
 pub struct FPUContext {
     pub fpscr: u32,
-    pub d16_d31: [u64; 16],
-    pub d0_d15: [u64; 16],
+    pub d16_d31: [[u32; 2]; 16],
+    pub d0_d15: [[u32; 2]; 16],
 }
 
 #[repr(C)]
