@@ -102,22 +102,26 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
 
     fn poll(&self) {
         // This runs in an interrupt context so it must be non-blocking and must not write to
-        // serial. Serial writes aren't IRQ-safe, and logger tend to write to stdout (serial ch1),
+        // serial. Serial writes aren't IRQ-safe, and loggers tend to write to stdout (serial ch1),
         // so also avoid logging here.
 
         // A failed try_lock means the monitor is active. In that case the serial stream carries
         // real GDB protocol traffic so we shouldn't touch it.
-        let Some(mut session) = self.session.try_lock() else {
-            return;
-        };
+        if let Some(mut session) = self.session.try_lock()
+            && let SessionStage::Active(gdb_state) = &mut session.stage
+            && let GdbStubStateMachine::Running(gdb) = gdb_state
+        {
+            const CTRL_C: u8 = 0x03;
 
-        // While the program is running, GDB can send `0x03` (Interrupt) to request a pause.
-        const CTRL_C: i32 = 0x03;
-        if unsafe { vex_sdk::vexSerialReadChar(1) } != CTRL_C {
-            return;
+            // While the program is running, GDB can send `0x03` (Interrupt) to request a pause.
+            // Search all pending bytes for interrupts.
+            while let Ok(Some(byte)) = gdb.borrow_conn().try_read() {
+                if byte == CTRL_C {
+                    session.target.request_interrupt();
+                    break;
+                }
+            }
         }
-
-        session.target.request_interrupt();
     }
 }
 

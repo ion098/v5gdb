@@ -29,7 +29,7 @@ async fn main(_peripherals: Peripherals) {
     colored::control::set_override(true);
     clang_log::init(log_level, "v5gdb(basic)");
 
-    v5gdb::install(V5Debugger::new(StdioTransport));
+    v5gdb::install(V5Debugger::new(StdioTransport::new()));
     v5gdb::breakpoint!();
 
     loop {

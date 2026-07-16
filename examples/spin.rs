@@ -30,7 +30,7 @@ async fn main(_peripherals: Peripherals) {
     colored::control::set_override(true);
     clang_log::init(log_level, "v5gdb(spin)");
 
-    v5gdb::install(V5Debugger::new(StdioTransport));
+    v5gdb::install(V5Debugger::new(StdioTransport::new()));
 
     // Stop here so GDB can attach before we get stuck.
     v5gdb::breakpoint!();

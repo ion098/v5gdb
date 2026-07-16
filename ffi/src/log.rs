@@ -2,7 +2,6 @@ use core::{fmt, fmt::Write};
 
 use log::{Log, Metadata, Record};
 use owo_colors::{AnsiColors, OwoColorize};
-use v5gdb::transport::mux::OUT_BUFFER_SIZE;
 use vex_sdk::vexSerialWriteBuffer;
 
 struct SimpleLogger;
@@ -25,8 +24,9 @@ impl Log for SimpleLogger {
     }
 
     fn flush(&self) {
+        const OUT_BUF_SIZE: i32 = 2048;
         unsafe {
-            while vex_sdk::vexSerialWriteFree(1) < OUT_BUFFER_SIZE as i32 {
+            while vex_sdk::vexSerialWriteFree(1) < OUT_BUF_SIZE {
                 vex_sdk::vexTasksRun();
             }
         }

@@ -11,7 +11,7 @@ use gdbstub::conn::{Connection, ConnectionExt};
 use spin::Once;
 use v5gdb::{
     debugger::V5Debugger,
-    transport::{StdioTransport, TransportError},
+    transport::{StdioTransport, Transport, TransportError},
 };
 
 mod log;
@@ -66,6 +66,10 @@ pub struct TransportImpl {
 }
 
 unsafe impl Send for TransportImpl {}
+
+// SAFETY: the FFI consumer is responsible for ensuring peek_byte/read_byte are
+// safe to call from an interrupt context.
+unsafe impl Transport for TransportImpl {}
 
 impl Connection for TransportImpl {
     type Error = TransportError;
@@ -135,13 +139,19 @@ unsafe fn wrap_err(maybe_error: *const c_char) -> TransportError {
 pub extern "C" fn install_stdio() {
     self::log::init();
     static DEBUGGER: Once<V5Debugger<StdioTransport>> = Once::new();
-    DEBUGGER.call_once(|| V5Debugger::new(StdioTransport));
+    DEBUGGER.call_once(|| V5Debugger::new(StdioTransport::new()));
     v5gdb::install_by_ref(DEBUGGER.get().unwrap());
 }
 
 /// Install the debugger with a custom transport method for communicating with GDB.
+///
+/// # Safety
+///
+/// The transport's [`peek_byte`](TransportImpl::peek_byte) and
+/// [`read_byte`](TransportImpl::read_byte) implementations must be safe to call from an interrupt
+/// context.
 #[unsafe(export_name = "v5gdb_install_custom")]
-pub extern "C" fn install_custom(transport: TransportImpl) {
+pub unsafe extern "C" fn install_custom(transport: TransportImpl) {
     self::log::init();
     static DEBUGGER: Once<V5Debugger<TransportImpl>> = Once::new();
     DEBUGGER.call_once(|| V5Debugger::new(transport));

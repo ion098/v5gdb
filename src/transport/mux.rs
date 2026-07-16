@@ -13,7 +13,7 @@
 
 use cobs::CobsEncoder;
 
-use crate::sdk::jumptable;
+use crate::sdk::serial::{self, Channel};
 
 /// Capture calls to `vexSerial*` functions and automatically add multiplexing packet framing,
 /// sending them over the User channel.
@@ -21,12 +21,22 @@ pub fn enable_auto_muxing() {
     unsafe {
         crate::sdk::redirect_function(
             vex_sdk::vexSerialWriteBuffer as *mut (),
-            user_write_buffer as *const (),
+            user::write_buffer as *const (),
         );
 
         crate::sdk::redirect_function(
             vex_sdk::vexSerialWriteChar as *mut (),
-            user_write_char as *const (),
+            user::write_char as *const (),
+        );
+
+        crate::sdk::redirect_function(
+            vex_sdk::vexSerialReadChar as *mut (),
+            user::read_char as *const (),
+        );
+
+        crate::sdk::redirect_function(
+            vex_sdk::vexSerialPeekChar as *mut (),
+            user::peek_char as *const (),
         );
     }
 }
@@ -40,16 +50,13 @@ pub enum ChannelId {
     Debug = b'd',
 }
 
-pub const USER: u32 = 1;
-pub const OUT_BUFFER_SIZE: usize = 2048;
-
 /// Write one or more COBS-encoded packets to serial output, each prefixed with the given channel
 /// id.
 ///
 /// Returns the number of bytes that were written from `buf`.
 pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
     while !buf.is_empty() {
-        let mut out_buf = [0u8; OUT_BUFFER_SIZE];
+        let mut out_buf = [0u8; serial::OUT_BUF_SIZE];
 
         // The actual out-buffer has 1 extra byte for the packet delimiter.
         let max_len = out_buf.len() - 1;
@@ -73,45 +80,79 @@ pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
         // block at index `length`, which means the pre-zeroed byte from when we first created the
         // buffer might not still be there. Thus we have to explicitly add it back in.
         out_buf[length] = 0;
-        write_raw(&out_buf[..=length]); // Include `0` packet delimiter.
-    }
-}
 
-/// Writes up to [`OUT_BUFFER_SIZE`] bytes to serial.
-fn write_raw(buf: &[u8]) {
-    let vexSerialWriteBuffer =
-        unsafe { jumptable!(0x89c, unsafe extern "C" fn(u32, *const u8, u32) -> i32) };
-
-    if unsafe { vex_sdk::vexSerialWriteFree(USER) as usize } < buf.len() {
-        flush_serial();
-    }
-
-    unsafe {
-        vexSerialWriteBuffer(USER, buf.as_ptr(), buf.len() as u32);
+        // Include `0` packet delimiter.
+        serial::write_all(serial::Channel::USER, &out_buf[..=length]).unwrap();
     }
 }
 
 pub fn flush_serial() {
     unsafe {
-        while (vex_sdk::vexSerialWriteFree(USER) as usize) != OUT_BUFFER_SIZE {
+        while serial::write_buf_capacity(serial::Channel::USER).unwrap() != serial::OUT_BUF_SIZE {
             vex_sdk::vexTasksRun();
         }
     }
 }
 
-unsafe extern "C" fn user_write_buffer(channel: u32, data: *const u8, data_len: u32) -> i32 {
-    if channel != 1 {
-        return -1;
-    }
-    let user_data = unsafe { core::slice::from_raw_parts(data, data_len as usize) };
-    write_all(ChannelId::User, user_data);
-    data_len as i32
-}
+/// User-visible serial interface.
+///
+/// This module contains replacements for the standard `vexSerial*` functions which automatically
+/// add additional framing so that serial consumers can easily differentiate debug data from
+/// standard user I/O. Currently only writes are muxed and reads are simply ignored.
+mod user {
+    use core::sync::atomic::{AtomicBool, Ordering};
 
-unsafe extern "C" fn user_write_char(channel: u32, c: u8) -> i32 {
-    if channel != 1 {
-        return -1;
+    use super::*;
+
+    pub extern "C" fn write_char(channel: u32, c: u8) -> i32 {
+        let channel = Channel::from(channel);
+        if channel == Channel::USER {
+            write_all(ChannelId::User, &[c]);
+            return 1;
+        }
+
+        serial::write_byte(channel, c) as i32
     }
-    write_all(ChannelId::User, &[c]);
-    1
+
+    pub unsafe extern "C" fn write_buffer(channel: u32, data: *const u8, data_len: u32) -> i32 {
+        let channel = Channel::from(channel);
+        if channel == Channel::USER {
+            let user_data = unsafe { core::slice::from_raw_parts(data, data_len as usize) };
+            write_all(ChannelId::User, user_data);
+            return data_len as i32;
+        }
+
+        unsafe {
+            serial::write_buf(channel, data, data_len as usize)
+                .map(|n| n as i32)
+                .unwrap_or(-1)
+        }
+    }
+
+    fn tried_to_read() {
+        static PROGRAM_TRIED_TO_READ: AtomicBool = AtomicBool::new(false);
+        if !PROGRAM_TRIED_TO_READ.swap(true, Ordering::Relaxed) {
+            log::warn!("Reading from serial while the debugger is active is unimplemented!");
+        }
+    }
+
+    pub extern "C" fn read_char(channel: u32) -> i32 {
+        let channel = Channel::from(channel);
+        if channel == Channel::USER {
+            tried_to_read();
+            return -1;
+        }
+
+        serial::read_byte(channel).map(|n| n as i32).unwrap_or(-1)
+    }
+
+    pub extern "C" fn peek_char(channel: u32) -> i32 {
+        let channel = Channel::from(channel);
+        if channel == Channel::USER {
+            tried_to_read();
+            return -1;
+        }
+
+        serial::peek_byte(channel).map(|n| n as i32).unwrap_or(-1)
+    }
 }

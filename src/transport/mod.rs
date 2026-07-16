@@ -1,10 +1,14 @@
 use core::{
+    cell::UnsafeCell,
     error::Error,
     fmt::{self, Debug, Display},
+    marker::PhantomData,
 };
 
 use gdbstub::conn::{Connection, ConnectionExt};
 use vex_sdk::vexTasksRun;
+
+use crate::sdk::serial::{self, Channel};
 
 #[cfg(target_arch = "arm")]
 pub mod mux;
@@ -27,22 +31,62 @@ impl From<&'static str> for TransportError {
 }
 
 /// Method of communication between debugger and host.
-pub trait Transport: ConnectionExt + Connection<Error = TransportError> + Send + 'static {}
-impl<T: ConnectionExt + Connection<Error = TransportError> + Send + 'static> Transport for T {}
-
-/// Debug logging via stdio.
-#[derive(Debug)]
-pub struct StdioTransport;
-
-impl Default for StdioTransport {
-    fn default() -> Self {
-        Self
+///
+/// # Safety
+///
+/// Types implementing this trait must have an implementation of [`Transport::try_read`] which is
+/// safe to call from an interrupt context. The default implementation of `try_read` calls
+/// [`ConnectionExt::peek`] and [`ConnectionExt::read`].
+pub unsafe trait Transport:
+    ConnectionExt + Connection<Error = TransportError> + Send + 'static
+{
+    /// Attempts to read a byte from the transport.
+    ///
+    /// Returns the next byte if one is available, or else `None`. This function is safe to call
+    /// from an interrupt context.
+    fn try_read(&mut self) -> Result<Option<u8>, Self::Error> {
+        if self.peek()?.is_some() {
+            self.read().map(Some)
+        } else {
+            Ok(None)
+        }
     }
 }
 
-impl Clone for StdioTransport {
-    fn clone(&self) -> Self {
-        Self
+/// Debug logging via stdio.
+///
+/// When using this transport, input and output are muxed as [described in the
+/// wiki](https://github.com/vexide/v5gdb/wiki/Transports#stdio-transport-usb-serial).
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct StdioTransport {
+    // Serial reading is single-consumer.
+    _unsync: PhantomData<UnsafeCell<()>>,
+}
+
+// SAFETY: Serial reading is safe to perform from an interrupt context because it just reads from
+// a lock-free SPSC ringbuffer which is filled asynchronously by CPU0. To ensure there is actually
+// only one consumer at a time we disable user reads via [`mux::enable_auto_muxing`] and unimplement
+// Sync. See also <https://internals.vexide.dev/sdk/tasks#system-tasks>.
+unsafe impl Transport for StdioTransport {
+    fn try_read(&mut self) -> Result<Option<u8>, Self::Error> {
+        // `vexSerialPeekChar` doesn't seem to work properly in ISRs, so we need an explicit
+        // implementation here.
+        Ok(serial::read_byte(Channel::USER))
+    }
+}
+
+impl StdioTransport {
+    pub const fn new() -> Self {
+        Self {
+            _unsync: PhantomData,
+        }
+    }
+}
+
+impl Default for StdioTransport {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -77,21 +121,13 @@ impl Connection for StdioTransport {
 
 impl ConnectionExt for StdioTransport {
     fn peek(&mut self) -> Result<Option<u8>, Self::Error> {
-        let char = unsafe { vex_sdk::vexSerialPeekChar(1) };
-
-        if char == -1 {
-            return Ok(None);
-        }
-
-        Ok(Some(char as u8))
+        Ok(serial::peek_byte(Channel::USER))
     }
 
     fn read(&mut self) -> Result<u8, Self::Error> {
         loop {
-            let c = unsafe { vex_sdk::vexSerialReadChar(1) };
-
-            if c != -1 {
-                return Ok(c as u8);
+            if let Some(byte) = serial::read_byte(Channel::USER) {
+                return Ok(byte);
             }
 
             unsafe {

@@ -23,7 +23,9 @@ class BaseTransport {
 };
 
 #if __cplusplus >= 202302L
-// A subclassable transport for custom implementations.
+/// A subclassable transport for custom implementations.
+///
+/// Implementors must ensure `flush` and `peek` are safe to call from an interrupt context.
 class Transport: public BaseTransport {
   public:
     virtual void initialize() noexcept = 0;

@@ -145,28 +145,6 @@ pub(crate) mod arm {
     /// The system time (ms) at which the IRQ hook last ran `Debugger::poll`.
     static LAST_POLL_TIME_MS: AtomicU32 = AtomicU32::new(0);
 
-    /// Total number of times [`irq_poll`] has been invoked (# of IRQs intercepted).
-    static IRQ_POLL_COUNT: AtomicU32 = AtomicU32::new(0);
-
-    /// Gets diagnostics regarding the IRQ hook. This can be used to ensure the IRQ handler is
-    /// actually being invoked.
-    #[must_use]
-    pub fn irq_poll_stats() -> IrqPollStats {
-        IrqPollStats {
-            poll_count: IRQ_POLL_COUNT.load(Ordering::Relaxed),
-            last_poll_ms: LAST_POLL_TIME_MS.load(Ordering::Relaxed),
-        }
-    }
-
-    /// Snapshot of the IRQ hook diagnostics returned by [`irq_poll_stats`].
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct IrqPollStats {
-        /// Total number of IRQs intercepted.
-        pub poll_count: u32,
-        /// System time (ms) of the last `Debugger::poll`.
-        pub last_poll_ms: u32,
-    }
-
     /// IRQ handler callback.
     ///
     /// This is called from `v5gdb_irq_handler` at the beginning of every IRQ exception and is
@@ -178,8 +156,6 @@ pub(crate) mod arm {
     /// lightweight with no allocation or blocking or calls to non-thread-safe functions.
     #[unsafe(export_name = "v5gdb_irq_poll")]
     pub extern "aapcs" fn irq_poll() {
-        IRQ_POLL_COUNT.fetch_add(1, Ordering::Relaxed);
-
         let now = unsafe { vex_sdk::vexSystemTimeGet() };
         let last = LAST_POLL_TIME_MS.load(Ordering::Relaxed);
 
