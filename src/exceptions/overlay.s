@@ -41,7 +41,15 @@ v5gdb_original_vector_addresses:
 v5gdb_irq_handler:
     @ Save caller-saved registers and the exception return address since `bl` will clobber `lr`.
     push {r0-r3, r12, lr}
+    vpush {d16-d31}
+    vpush {d0-d7}
+    vmrs r0, fpscr
+    push {r0, r1} @ r1 is just a bogus register for stack alignment
     blx v5gdb_irq_poll
+    pop {r0, r1}
+    vmsr fpscr, r0
+    vpop {d0-d7}
+    vpop {d16-d31}
     pop {r0-r3, r12, lr}
     @ Chain to the original IRQ handler, which will perform the actual exception return.
     ldr pc, original_irq_addr
