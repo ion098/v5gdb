@@ -20,6 +20,7 @@ use crate::{
     Debugger,
     exceptions::DebugEventContext,
     gdb_target::{MonitorStatus, StopReason, V5Target},
+    sdk::stop_all_motors,
     sys::{DebuggerSystem, System},
     transport::{Transport, TransportError},
 };
@@ -34,13 +35,35 @@ pub enum DebuggerError {
     },
 }
 
+/// Initial configuration for [`V5Debugger`].
+///
+/// Stores the debugger's default settings. These values are applied once during
+/// [`Debugger::initialize`] and have no effect if modified afterwards. All settings can be
+/// overridden at runtime from GDB using monitor commands, without restarting the program.
+#[derive(Debug, Default, Clone)]
+pub struct DebuggerConfig {
+    /// Whether all motors should be stopped immediately when a breakpoint fires.
+    ///
+    /// This prevents the robot from driving away or actuating mechanisms while execution is
+    /// paused. Can be toggled at runtime with `monitor autostop true` / `monitor autostop false`.
+    ///
+    /// Defaults to `false`.
+    pub stop_motors_on_break: bool,
+}
+
 /// Debugger manager.
 pub struct V5Debugger<S: Transport> {
     session: Mutex<DebugSession<'static, S>>,
+    /// Initial settings applied to the debugger on [`Debugger::initialize`].
+    ///
+    /// After initialisation, the live values in [`V5Target`] are the source of truth and this
+    /// field is no longer read. Mutating it after calling [`install`](crate::install) has no
+    /// effect.
+    config: DebuggerConfig,
 }
 
 impl<S: Transport> V5Debugger<S> {
-    /// Creates a new debugger.
+    /// Creates a new debugger with default config.
     ///
     /// This function can only be called once per program run because the debugger will attempt to
     /// claim a global packet buffer.
@@ -66,7 +89,18 @@ impl<S: Transport> V5Debugger<S> {
                 target,
                 internal_breaks: None,
             }),
+            config: DebuggerConfig::default(),
         }
+    }
+
+    /// Applies a [`DebuggerConfig`] to this debugger.
+    ///
+    /// Replaces any previously set configuration. Has no effect if called after
+    /// [`install`](crate::install).
+    #[must_use]
+    pub fn with_config(mut self, config: DebuggerConfig) -> Self {
+        self.config = config;
+        self
     }
 
     /// Returns the debugger's internal state.
@@ -82,13 +116,23 @@ unsafe impl<S: Transport + 'static> Debugger for V5Debugger<S> {
         session.register_internal_breakpoints();
         System::initialize(&mut session.target);
         crate::sdk::competition::install_override();
-        log::debug!("Debugger initialized");
+
+        // Apply the initial config into the live target state. from this point on, the values in
+        // V5Target are the source of truth so `self.config` is never read again.
+        session.target.stop_motors_on_break = self.config.stop_motors_on_break;
+
+        log::debug!("Debugger initialized (config={:?})", self.config);
     }
 
     unsafe fn handle_debug_event(&self, ctx: &mut DebugEventContext) -> bool {
         let mut session = self.session();
 
         let stop_reason = session.target.enter_breakpoint(ctx);
+
+        if session.target.stop_motors_on_break {
+            log::debug!("Auto motor-stop triggered by breakpoint");
+            stop_all_motors();
+        }
 
         let action = session.handle_stop(stop_reason);
         if action == StopAction::EnterMonitor {

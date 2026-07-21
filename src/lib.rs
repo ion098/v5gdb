@@ -33,14 +33,48 @@ mod debugger_stub {
 
     pub struct V5Debugger<S: Transport> {
         _stream: spin::Mutex<S>,
+        config: DebuggerConfig,
+    }
+
+    /// Init configuration for the debugger.
+    ///
+    /// These values control the debugger's default behaviour and are applied once during
+    /// [`Debugger::initialize`]. Settings can be overridden at runtime through GDB monitor
+    /// commands after the debugger starts
+    #[derive(Debug, Default, Clone)]
+    pub struct DebuggerConfig {
+        /// Whether motors should be stopped by default when a breakpoint fires.
+        ///
+        /// When `true`, [`sdk::stop_all_motors`] is called immediately on every breakpoint before
+        /// the GDB console loop begins. This can be overridden at runtime with
+        /// `monitor autostop true` / `monitor autostop false`.
+        ///
+        /// Defaults to `false`.
+        pub stop_motors_on_break: bool,
     }
 
     impl<S: Transport> V5Debugger<S> {
+        /// Creates a new debugger with default configuration.
         #[must_use]
         pub fn new(stream: S) -> Self {
             Self {
                 _stream: spin::Mutex::new(stream),
+                config: DebuggerConfig::default(),
             }
+        }
+
+        /// Sets whether all motors should be automatically stopped whenever a breakpoint fires.
+        ///
+        /// This controls the *default* value of `V5Target::stop_motors_on_break`. It is applied
+        /// once at initialisation and has no effect if changed after [`install`](crate::install)
+        /// is called. Use `monitor autostop true` / `monitor autostop false` from GDB to toggle
+        /// the setting at runtime.
+        ///
+        /// Defaults to `false`.
+        #[must_use]
+        pub fn with_motor_stop(mut self, enabled: bool) -> Self {
+            self.config.stop_motors_on_break = enabled;
+            self
         }
     }
 

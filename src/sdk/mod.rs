@@ -89,6 +89,28 @@ macro_rules! jumptable {
 }
 pub(crate) use jumptable;
 
+/// Immediately stops every motor connected to the brain by setting its voltage to 0 mV.
+///
+/// Ports that have no device connected are silently skipped. The loop does **not** short circuit
+/// on a null device handle, so noncontiguous motor configurations (e.g. motors on ports 1 and 5
+/// with nothing on 2-4) are handled correctly.
+pub fn stop_all_motors() {
+    use vex_sdk::{V5_MAX_DEVICE_PORTS, vexDeviceGetByIndex, vexDeviceMotorVoltageSet};
+    for port_num in 0..V5_MAX_DEVICE_PORTS {
+        unsafe {
+            let device = vexDeviceGetByIndex(port_num as u32);
+            if device.is_null() {
+                // Nothing plugged in to this port skip but keep iterating.
+                // Must not `break` here: ports can be non-contiguous, so a null handle does not
+                // mean there are no more devices
+                continue;
+            }
+            // setting voltage to 0mV immediately cuts power to the motor
+            // this works for both 11W and 5.5W smart-motors
+            vexDeviceMotorVoltageSet(device, 0);
+        }
+    }
+}
 /// System serial I/O.
 ///
 /// See the `vex-sdk-jumptable` crate for docs on jumptable functions.

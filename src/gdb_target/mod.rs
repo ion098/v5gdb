@@ -128,6 +128,7 @@ pub struct V5Target {
     /// If set, the next instruction executed in user code will trigger entry into the debug
     /// monitor and be reported to GDB as SIGINT.
     interrupt_pending: bool,
+    pub stop_motors_on_break: bool,
 }
 
 impl V5Target {
@@ -143,6 +144,7 @@ impl V5Target {
             interrupt_pending: false,
             original_hw_lock_state: false,
             hw_manager: HwBreakpointManager::setup(devcfg),
+            stop_motors_on_break: false,
         }
     }
 
