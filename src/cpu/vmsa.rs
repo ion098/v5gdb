@@ -4,7 +4,7 @@ use core::arch::asm;
 
 use aarch32_cpu::{
     asm::{dsb, isb},
-    mmu::{CacheableMemoryAttribute, MemoryRegionAttributes},
+    mmu::{CachePolicy, MemoryRegionAttributes},
     register::{SysReg, SysRegRead, SysRegWrite},
 };
 use arbitrary_int::*;
@@ -42,7 +42,7 @@ impl SysRegWrite for TranslationTableBaseControlRegister {}
 
 impl TranslationTableBaseControlRegister {
     pub fn read() -> Self {
-        Self::new_with_raw_value(unsafe { Self::read_raw() })
+        Self::new_with_raw_value(Self::read_raw())
     }
 
     /// Returns whether the given virtual address uses translation table #0.
@@ -59,7 +59,7 @@ pub struct TranslationTableBaseRegister {
     #[bit(5, rw)]
     not_outer_shareable: bool,
     #[bits(3..=4, rw)]
-    outer_cache_attrs: CacheableMemoryAttribute,
+    outer_cache_attrs: CachePolicy,
     #[bit(1, rw)]
     sharable: bool,
     #[bit(0, rw)]
@@ -228,8 +228,8 @@ impl SectionDescriptor {
                 let aa = ((c as u8) << 1) | b as u8;
 
                 MemoryRegionAttributes::CacheableMemory {
-                    inner: CacheableMemoryAttribute::new_with_raw_value(u2::new(aa)),
-                    outer: CacheableMemoryAttribute::new_with_raw_value(u2::new(bb)),
+                    inner: CachePolicy::new_with_raw_value(u2::new(aa)),
+                    outer: CachePolicy::new_with_raw_value(u2::new(bb)),
                 }
             }
             _ => return None,
@@ -306,7 +306,7 @@ impl SysRegWrite for DomainAccessControlRegister {}
 impl DomainAccessControlRegister {
     #[must_use]
     pub fn read() -> Self {
-        Self(unsafe { <Self as SysRegRead>::read_raw() })
+        Self(<Self as SysRegRead>::read_raw())
     }
 
     /// Sets all domains to have the given access control setting.

@@ -202,8 +202,7 @@ impl SysRegWrite for SecureDebugEnable {}
 impl SecureDebugEnable {
     /// Read the current value.
     pub fn read() -> Self {
-        // SAFETY: This is a valid register access wth no side effects.
-        Self::new_with_raw_value(unsafe { Self::read_raw() })
+        Self::new_with_raw_value(Self::read_raw())
     }
 
     /// Update the current value.

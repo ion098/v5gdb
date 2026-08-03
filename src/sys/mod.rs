@@ -1,4 +1,3 @@
-use cfg_if::cfg_if;
 use gdbstub::{
     common::Tid,
     target::{
@@ -13,11 +12,12 @@ use crate::{
     gdb_target::{V5Target, arch::ArmRegisterID, single_register_access::SavedRegister},
 };
 
-cfg_if! {
-    if #[cfg(feature = "freertos")] {
+cfg_select! {
+    feature = "freertos" => {
         pub mod freertos;
         pub type System = freertos::FreeRtosSystem;
-    } else {
+    }
+    _ => {
         pub mod bare;
         pub type System = bare::BareSystem;
     }

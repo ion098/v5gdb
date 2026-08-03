@@ -23,7 +23,7 @@ impl VectorBaseAddressRegister {
 
     /// Reads the given value to VBAR.
     pub fn read() -> Self {
-        Self::new_with_raw_value(unsafe { Self::read_raw() })
+        Self::new_with_raw_value(Self::read_raw())
     }
 
     /// Writes the given value to VBAR.
