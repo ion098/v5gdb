@@ -275,7 +275,7 @@ fn make_pros_template(library: &Path) {
     println!("To register this template with PROS, please run:\n");
     println!("\tpros c fetch {}", relative_zip_file.display());
 
-    println!("\nOnce registering, install it in a project with:\n");
+    println!("\nOnce registered, install it in a project with:\n");
     println!("\tpros c apply v5gdb --force-apply");
 }
 
