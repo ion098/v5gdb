@@ -127,6 +127,10 @@ pub mod serial {
     pub struct Channel(pub u32);
 
     impl Channel {
+        /// The VEXos user serial channel (supports read + write).
+        ///
+        /// This is the only channel that can be easily accessed by end users. The V5 Brain
+        /// publishes it via USB CDC ACM on its Micro-USB port.
         pub const USER: Self = Self(1);
     }
 

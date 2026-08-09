@@ -6,8 +6,8 @@
 //! The current implementation is compatible with the following SDKs:
 //!
 //! - vex_sdk_jumptable
-//! - v5rt
-//! - v5rts
+//! - v5rt (aka. VEXcode SDK)
+//! - v5rts (aka. VEX Partner SDK)
 
 #![allow(non_snake_case)]
 
@@ -50,13 +50,24 @@ pub enum ChannelId {
     Debug = b'd',
 }
 
+/// The size of the buffer used to build a single outgoing packet.
+///
+/// This is deliberately much smaller than [`serial::OUT_BUF_SIZE`]: writes are muxed from whatever
+/// task called `vexSerial*`, and some of those have very little stack to spare. PROS's
+/// `Serial Daemon` task, for example, gets only 2 KiB in total, so a large buffer here overflows it
+/// on the first flush of stdout.
+///
+/// The buffer has to live on the stack rather than in a static because [`write_all`] is reentrant:
+/// a debug exception can interrupt a task partway through a write and send a packet of its own.
+const PACKET_BUF_SIZE: usize = 128;
+
 /// Write one or more COBS-encoded packets to serial output, each prefixed with the given channel
 /// id.
 ///
 /// Returns the number of bytes that were written from `buf`.
 pub fn write_all(channel: ChannelId, mut buf: &[u8]) {
     while !buf.is_empty() {
-        let mut out_buf = [0u8; serial::OUT_BUF_SIZE];
+        let mut out_buf = [0u8; PACKET_BUF_SIZE];
 
         // The actual out-buffer has 1 extra byte for the packet delimiter.
         let max_len = out_buf.len() - 1;
