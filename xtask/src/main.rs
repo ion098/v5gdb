@@ -252,10 +252,10 @@ fn make_pros_template(library: &Path) {
     fs::write(template_dir.join("template.pros"), manifest).unwrap();
 
     // Finally, zip the whole thing.
-    let zipfile = template_staging_dir.join(format!("{template_id}.zip"));
+    let zip_path = template_staging_dir.join(format!("{template_id}.zip"));
     let mut zip_cmd = Command::new("zip")
         .args(["-r", "-9"])
-        .arg(&zipfile)
+        .arg(&zip_path)
         .arg(".")
         .current_dir(&template_dir)
         .spawn()
@@ -266,7 +266,17 @@ fn make_pros_template(library: &Path) {
         exit(zip_status.code().unwrap_or(1));
     }
 
-    println!("PROS Template: {}", zipfile.display());
+    let relative_zip_file = zip_path
+        .strip_prefix(&env::current_dir().unwrap())
+        .unwrap_or(&zip_path);
+
+    println!("Built template: {}\n", zip_path.display());
+
+    println!("To register this template with PROS, please run:\n");
+    println!("\tpros c fetch {}", relative_zip_file.display());
+
+    println!("\nOnce registering, install it in a project with:\n");
+    println!("\tpros c apply v5gdb --force-apply");
 }
 
 fn make_pros_manifest(cargo_manifest: &Value, files: &[PathBuf]) -> Vec<u8> {
