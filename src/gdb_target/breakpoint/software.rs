@@ -5,7 +5,7 @@ use crate::{
         cache::{self, CacheTarget},
         instruction::Instruction,
     },
-    gdb_target::{V5Target, arch::ArmBreakpointKind, breakpoint::BreakpointError},
+    gdb_target::{V5Target, arch::ArmBreakpointKind, breakpoint::BreakpointError, memory::test_access},
 };
 
 /// A software breakpoint.
@@ -112,7 +112,7 @@ impl V5Target {
         thumb: bool,
         internal: bool,
     ) -> Result<(), BreakpointError> {
-        if addr < 0x0300_0000 {
+        if test_access(addr..(addr + 4), true) == 0 {
             return Err(BreakpointError::CannotWrite);
         }
 

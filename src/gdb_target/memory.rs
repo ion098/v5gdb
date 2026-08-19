@@ -43,7 +43,7 @@ pub fn write_memory(start_addr: u32, data: &[u8]) -> bool {
 
 /// Given a range of addresses, returns how many bytes can be written to or read from without
 /// faulting.
-fn test_access(mut range: Range<u32>, write: bool) -> usize {
+pub fn test_access(mut range: Range<u32>, write: bool) -> usize {
     log::debug!("Testing access for addr range {range:?} (write={write})");
 
     let mut check_addr = range.start & SECTION_MASK;
