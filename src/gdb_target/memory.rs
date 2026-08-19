@@ -1,6 +1,4 @@
-use core::{ops::Range, ptr};
-
-use crate::cpu::vmsa::TranslationTable;
+use core::{arch::asm, ops::Range, ptr};
 
 const SECTION_SIZE: u32 = 1 << 20;
 const SECTION_MASK: u32 = !0 << 20;
@@ -49,26 +47,24 @@ fn test_access(mut range: Range<u32>, write: bool) -> usize {
     log::debug!("Testing access for addr range {range:?} (write={write})");
 
     let mut check_addr = range.start & SECTION_MASK;
+    let mut par_value: u32 = 0;
     while check_addr < range.end {
-        let tt = TranslationTable::for_addr(check_addr);
-        // SAFETY: This address should be valid for reads because it was sourced from the
-        // currently-active translation table.
-        let descriptor = unsafe { *tt.lookup_l1(check_addr) };
+        unsafe {
+            asm!(
+                "cmp {write}, #1",
+                "ite eq",
+                "mcreq p15, 0, {check_addr}, c7, c8, 1 @ ATS1CPW",
+                "mcrne p15, 0, {check_addr}, c7, c8, 0 @ ATS1CPR",
+                "isb",
+                "mrc p15, 0, {par_value}, c7, c4, 0 @ read PAR",
+                write = in(reg) write as u32,
+                check_addr = in(reg) check_addr,
+                par_value = out(reg) par_value,
+                options(nomem, nostack)
+            );
+        }
 
-        // Page-level checks aren't currently implemented because VEXos doesn't seem to use them.
-        let can_access = descriptor
-            .as_section()
-            .and_then(|section| section.access_permissions().ok())
-            .map(|perms| {
-                if write {
-                    perms.test_write(true)
-                } else {
-                    perms.test_read(true)
-                }
-            })
-            .unwrap_or(false);
-
-        if !can_access {
+        if (par_value & 1) != 0 {
             range.end = check_addr;
             break;
         }
