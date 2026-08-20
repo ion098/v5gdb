@@ -143,9 +143,9 @@ impl V5Target {
 
         let mut bkpt = unsafe { SwBreakpoint::new(addr, thumb, internal) };
 
-        let size = bkpt.instr_backup.size() as u32;
+        let size = bkpt.instr_backup.size();
 
-        if test_access(addr..(addr + size), true) != size {
+        if test_access(addr..(addr + size as u32), true) != size {
             return Err(BreakpointError::CannotWrite);
         }
 
