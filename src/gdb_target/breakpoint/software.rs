@@ -112,10 +112,6 @@ impl V5Target {
         thumb: bool,
         internal: bool,
     ) -> Result<(), BreakpointError> {
-        if test_access(addr..(addr + 4), true) == 0 {
-            return Err(BreakpointError::CannotWrite);
-        }
-
         let mut next_inactive = None;
 
         for bkpt_slot in self.breaks.iter_mut() {
@@ -146,6 +142,12 @@ impl V5Target {
         };
 
         let mut bkpt = unsafe { SwBreakpoint::new(addr, thumb, internal) };
+
+        let size = bkpt.instr_backup.size() as u32;
+
+        if test_access(addr..(addr + size), true) != size {
+            return Err(BreakpointError::CannotWrite);
+        }
 
         if !self.breaks_paused {
             bkpt.set_enabled(true);
