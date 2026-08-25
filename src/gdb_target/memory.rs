@@ -2,6 +2,10 @@ use core::{arch::asm, ops::Range, ptr};
 
 use crate::logging;
 
+use crate::cpu::vmsa::PhysicalAccessRegister;
+
+use aarch32_cpu::register::Par;
+
 const SECTION_SIZE: u32 = 1 << 20;
 const SECTION_MASK: u32 = !0 << 20;
 
@@ -49,7 +53,6 @@ pub fn test_access(mut range: Range<u32>, write: bool) -> usize {
     logging::trace!("Testing access for {:#010x}..{:#010x} (write={write})", range.start, range.end);
 
     let mut check_addr = range.start & SECTION_MASK;
-    let mut par_value: u32 = 0;
     while check_addr < range.end {
         unsafe {
             asm!(
@@ -58,15 +61,15 @@ pub fn test_access(mut range: Range<u32>, write: bool) -> usize {
                 "mcreq p15, 0, {check_addr}, c7, c8, 1 @ ATS1CPW",
                 "mcrne p15, 0, {check_addr}, c7, c8, 0 @ ATS1CPR",
                 "isb",
-                "mrc p15, 0, {par_value}, c7, c4, 0 @ read PAR",
                 write = in(reg) write as u32,
                 check_addr = in(reg) check_addr,
-                par_value = out(reg) par_value,
                 options(nomem, nostack)
             );
         }
 
-        if (par_value & 1) != 0 {
+        let par = PhysicalAccessRegister::from(Par::read());
+
+        if par.fault() {
             range.end = check_addr;
             break;
         }
